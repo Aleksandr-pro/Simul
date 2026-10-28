@@ -1,0 +1,11 @@
+{
+  "name": "@simul/renderer",
+  "version": "0.1.0",
+  "description": "2D-рендер телеметрии, пружинная физика интерфейса и процедурный WebAudio-синтезатор движка Simul",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@simul/core": "*"
+  }
+}
