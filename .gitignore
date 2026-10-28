@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.npm/
+
+# Build outputs
+dist/
+build/
+out/
+coverage/
+*.tsbuildinfo
+
+# Caches & tooling
+.vite/
+.turbo/
+.cache/
+.pytest_cache/
+
+# Environment & secrets (NEVER commit real keys)
+.env
+.env.local
+.env.*.local
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

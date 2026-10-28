@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "references": [
+    { "path": "../../packages/simul-core" },
+    { "path": "../../packages/simul-renderer" },
+    { "path": "../../packages/simul-cloud" }
+  ],
+  "include": ["src/**/*.ts", "vite.config.ts"]
+}

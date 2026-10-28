@@ -1,0 +1,23 @@
+{
+  "name": "simul-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Simul Engine — специализированный высокопроизводительный движок для симулятора блогера «ВИРАЛ» и системных 2D-симуляторов",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b packages/simul-core packages/simul-renderer packages/simul-cloud apps/studio",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "npm --workspace @simul/studio run dev",
+    "build": "tsc -b packages/simul-core packages/simul-renderer packages/simul-cloud && npm --workspace @simul/studio run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}
