@@ -143,18 +143,45 @@ int main() {
         CHECK(!BinarySave::deserialize_from_bytes(loaded, bytes.data(), bytes.size(), err));
     }
 
-    // 6. Проверка нативного GPU 2D-рендера, кириллического атласа GolosText и игрового клиента ViralGameApp
+    // 6. Проверка мобильного портретного UI (390x844 dp + safe-area), иллюстрации студии и конструктора превью
     {
         sg_desc desc{};
         sg_setup(&desc);
 
+        simul::game::ThumbnailDesign td{1, 1, 2, 0.15f};
+        PackagingVariant pv{};
+        simul::game::apply_thumbnail_design_to_variant(td, NicheId::Tech, pv);
+        CHECK(pv.visual_contrast > 0.80f);
+        CHECK(pv.curiosity_gap > 0.85f);
+
         simul::game::ViralGameApp app;
+        app.set_storage_directory("/tmp");
+        app.set_safe_area(38.0f, 18.0f);
         CHECK(app.init());
-        app.update_and_render(0.016f, 480.0f, 880.0f);
-        app.on_pointer_down(240.0f, 850.0f);
-        app.on_pointer_up(240.0f, 850.0f);
-        app.update_and_render(0.016f, 480.0f, 880.0f);
+
+        // Рендер на узком смартфоне (360x780 dp) и стандартном смартфоне (390x844 dp)
+        app.update_and_render(0.016f, 360.0f, 780.0f);
+        app.update_and_render(0.016f, 390.0f, 844.0f);
+
+        // Тап по шагу «2. Монтаж» и «3. Обложка» в портретном режиме смартфона
+        app.on_pointer_down(195.0f, 300.0f, true);
+        app.on_pointer_up(195.0f, 300.0f, true);
+        app.update_and_render(0.016f, 390.0f, 844.0f);
+
+        app.on_pointer_down(330.0f, 300.0f, true);
+        app.on_pointer_up(330.0f, 300.0f, true);
+        app.update_and_render(0.016f, 390.0f, 844.0f);
+
+        // Переключение по всем 5 вкладкам нижнего таб-бара
+        for (int tab = 0; tab < 5; ++tab) {
+            const float tx = 40.0f + static_cast<float>(tab) * 76.0f;
+            app.on_pointer_down(tx, 800.0f, true);
+            app.on_pointer_up(tx, 800.0f, true);
+            app.update_and_render(0.016f, 390.0f, 844.0f);
+        }
+
         app.shutdown();
+        std::remove("/tmp/career_autosave.simsave");
 
         sg_shutdown();
     }

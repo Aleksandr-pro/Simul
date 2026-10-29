@@ -30,7 +30,7 @@ std::uint32_t Utf8FontAtlas::next_utf8_codepoint(std::string_view text, std::siz
 }
 
 bool Utf8FontAtlas::build_from_embedded_ttf(float base_pixel_height) {
-    base_pixel_height_ = base_pixel_height > 8.0f ? base_pixel_height : 22.0f;
+    base_pixel_height_ = base_pixel_height > 12.0f ? base_pixel_height : 56.0f;
 
     stbtt_fontinfo font{};
     if (!stbtt_InitFont(&font, kEmbeddedGolosFontData,
@@ -46,25 +46,26 @@ bool Utf8FontAtlas::build_from_embedded_ttf(float base_pixel_height) {
 
     std::vector<std::uint8_t> alpha_sheet(static_cast<std::size_t>(kAtlasWidth * kAtlasHeight), 0u);
 
-    // Белый блок 4x4 в (0,0) для векторных карточек, линий и частиц
-    for (int y = 0; y < 4; ++y) {
-        for (int x = 0; x < 4; ++x) {
+    // Белый блок 6x6 в (0,0) для векторных карточек, линий и частиц (с запасом под фильтрацию)
+    for (int y = 0; y < 6; ++y) {
+        for (int x = 0; x < 6; ++x) {
             alpha_sheet[static_cast<std::size_t>(y * kAtlasWidth + x)] = 255u;
         }
     }
 
     std::vector<std::uint32_t> codepoints;
-    codepoints.reserve(300);
+    codepoints.reserve(320);
     for (std::uint32_t cp = 0x20u; cp <= 0x7Eu; ++cp) codepoints.push_back(cp);
     for (std::uint32_t cp = 0x0400u; cp <= 0x045Fu; ++cp) codepoints.push_back(cp);
     for (std::uint32_t cp : {0x00ABu, 0x00BBu, 0x00B7u, 0x00D7u, 0x2013u, 0x2014u,
-                             0x2022u, 0x2026u, 0x20BDu, 0x2192u, 0x2605u, 0x2713u}) {
+                             0x2022u, 0x2026u, 0x20BDu, 0x2191u, 0x2192u, 0x2193u,
+                             0x25B6u, 0x25CFu, 0x2605u, 0x26A1u, 0x2713u, 0x2715u}) {
         codepoints.push_back(cp);
     }
 
-    int pen_x = 8;
-    int pen_y = 2;
-    int row_h = 8;
+    int pen_x = 12;
+    int pen_y = 4;
+    int row_h = 12;
     glyphs_.clear();
 
     for (std::uint32_t cp : codepoints) {
@@ -76,12 +77,12 @@ bool Utf8FontAtlas::build_from_embedded_ttf(float base_pixel_height) {
         const int gw = std::max(0, x1 - x0);
         const int gh = std::max(0, y1 - y0);
 
-        if (pen_x + gw + 2 >= kAtlasWidth) {
-            pen_x = 2;
-            pen_y += row_h + 2;
+        if (pen_x + gw + 4 >= kAtlasWidth) {
+            pen_x = 4;
+            pen_y += row_h + 4;
             row_h = 0;
         }
-        if (pen_y + gh + 2 >= kAtlasHeight) {
+        if (pen_y + gh + 4 >= kAtlasHeight) {
             break;
         }
 
@@ -109,7 +110,7 @@ bool Utf8FontAtlas::build_from_embedded_ttf(float base_pixel_height) {
         g.xadvance = static_cast<float>(advance_w) * scale;
         glyphs_[cp] = g;
 
-        pen_x += gw + 2;
+        pen_x += gw + 4;
         if (gh > row_h) row_h = gh;
     }
 

@@ -140,7 +140,7 @@ std::string compact_num(std::int64_t val) {
     if (abs_v >= 1'000'000.0) {
         std::snprintf(buf, sizeof(buf), "%.2fM", static_cast<double>(val) / 1'000'000.0);
     } else if (abs_v >= 1'000.0) {
-        std::snprintf(buf, sizeof(buf), "%.1fK", static_cast<double>(val) / 1'000.0);
+        std::snprintf(buf, sizeof(buf), "%.1fK", static_cast<double>(val) / 1'000'000.0 * 1000.0);
     } else {
         std::snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(val));
     }
@@ -149,18 +149,18 @@ std::string compact_num(std::int64_t val) {
 
 Color wave_palette(std::uint8_t wave) noexcept {
     switch (wave) {
-        case 0: return Color::rgba(100, 116, 139);
+        case 0: return Color::rgba(148, 163, 184);
         case 1: return Color::rgba(56, 189, 248);
         case 2: return Color::rgba(129, 140, 248);
-        case 3: return Color::rgba(245, 158, 11);
-        default: return Color::rgba(236, 72, 153);
+        case 3: return Color::rgba(250, 204, 21);
+        default: return Color::rgba(244, 63, 94);
     }
 }
 
 } // namespace
 
 bool Renderer2D::init() {
-    if (!atlas_.build_from_embedded_ttf(24.0f)) {
+    if (!atlas_.build_from_embedded_ttf(56.0f)) {
         return false;
     }
     vertices_.reserve(kMaxVertices);
@@ -171,7 +171,7 @@ bool Renderer2D::init() {
     img_desc.pixel_format = SG_PIXELFORMAT_RGBA8;
     img_desc.data.ptr = atlas_.rgba_pixels().data();
     img_desc.data.size = atlas_.rgba_pixels().size();
-    img_desc.label = "simul_font_atlas";
+    img_desc.label = "simul_font_atlas_hd";
     const sg_image img = sg_make_image(&img_desc);
     gpu_img_id_ = img.id;
 
@@ -300,6 +300,7 @@ void Renderer2D::push_quad(
 }
 
 void Renderer2D::draw_rect(float x, float y, float w, float h, Color color) {
+    if (w <= 0.0f || h <= 0.0f) return;
     const float wu = atlas_.white_u();
     const float wv = atlas_.white_v();
     const std::uint32_t c = color.pack_abgr();
@@ -307,12 +308,14 @@ void Renderer2D::draw_rect(float x, float y, float w, float h, Color color) {
 }
 
 void Renderer2D::draw_gradient_v(float x, float y, float w, float h, Color top, Color bottom) {
+    if (w <= 0.0f || h <= 0.0f) return;
     const float wu = atlas_.white_u();
     const float wv = atlas_.white_v();
     push_quad(x, y, x + w, y + h, wu, wv, wu, wv, top.pack_abgr(), bottom.pack_abgr());
 }
 
 void Renderer2D::draw_rounded_rect(float x, float y, float w, float h, float radius, Color color) {
+    if (w <= 0.0f || h <= 0.0f) return;
     const float r = std::min({ std::max(0.0f, radius), w * 0.5f, h * 0.5f });
     if (r < 1.5f) {
         draw_rect(x, y, w, h, color);
@@ -326,7 +329,7 @@ void Renderer2D::draw_rounded_rect(float x, float y, float w, float h, float rad
     const float wu = atlas_.white_u();
     const float wv = atlas_.white_v();
     const std::uint32_t col = color.pack_abgr();
-    constexpr int kCornerSegs = 5;
+    constexpr int kCornerSegs = 6;
     constexpr float kHalfPi = 1.57079632679f;
 
     const float corners[4][3] = {
@@ -390,6 +393,13 @@ void Renderer2D::draw_circle(float cx, float cy, float radius, Color color, int 
     }
 }
 
+void Renderer2D::draw_triangle(float x0, float y0, float x1, float y1, float x2, float y2, Color color) {
+    const float wu = atlas_.white_u();
+    const float wv = atlas_.white_v();
+    const std::uint32_t c = color.pack_abgr();
+    push_tri({x0, y0, wu, wv, c}, {x1, y1, wu, wv, c}, {x2, y2, wu, wv, c});
+}
+
 void Renderer2D::draw_text(float x, float y, std::string_view utf8_text, float font_size_px, Color color) {
     const float ratio = font_size_px / atlas_.base_pixel_height();
     const float baseline_y = y + atlas_.ascent_px() * ratio;
@@ -414,10 +424,19 @@ void Renderer2D::draw_text(float x, float y, std::string_view utf8_text, float f
     }
 }
 
+void Renderer2D::draw_text_fit(float x, float y, float max_width, std::string_view utf8_text, float max_font_px, Color color) {
+    float sz = max_font_px;
+    const float tw = measure_text(utf8_text, sz);
+    if (tw > max_width && max_width > 12.0f) {
+        sz = std::max(10.0f, sz * (max_width / tw));
+    }
+    draw_text(x, y + (max_font_px - sz) * 0.5f, utf8_text, sz, color);
+}
+
 void Renderer2D::draw_text_wrapped(
     float x, float y, float max_width, std::string_view utf8_text,
     float font_size_px, Color color, float* out_height) {
-    const float line_step = font_size_px * 1.28f;
+    const float line_step = font_size_px * 1.32f;
     float cur_y = y;
 
     std::size_t i = 0;
@@ -457,17 +476,48 @@ float Renderer2D::measure_text(std::string_view utf8_text, float font_size_px) c
     return atlas_.measure_text_width(utf8_text, font_size_px);
 }
 
+float Renderer2D::measure_text_wrapped(float max_width, std::string_view utf8_text, float font_size_px) const noexcept {
+    const float line_step = font_size_px * 1.32f;
+    int lines = 0;
+
+    std::size_t i = 0;
+    std::string current_line;
+    while (i < utf8_text.size()) {
+        while (i < utf8_text.size() && utf8_text[i] == ' ') ++i;
+        if (i >= utf8_text.size()) break;
+        const std::size_t word_start = i;
+        while (i < utf8_text.size() && utf8_text[i] != ' ' && utf8_text[i] != '\n') ++i;
+        const std::string_view word = utf8_text.substr(word_start, i - word_start);
+
+        std::string candidate = current_line.empty() ? std::string(word) : (current_line + " " + std::string(word));
+        if (!current_line.empty() && measure_text(candidate, font_size_px) > max_width) {
+            ++lines;
+            current_line = std::string(word);
+        } else {
+            current_line = std::move(candidate);
+        }
+
+        if (i < utf8_text.size() && utf8_text[i] == '\n') {
+            ++lines;
+            current_line.clear();
+            ++i;
+        }
+    }
+    if (!current_line.empty()) ++lines;
+    return static_cast<float>(std::max(1, lines)) * line_step;
+}
+
 void Renderer2D::draw_wave_telemetry(
     float x, float y, float w, float h,
     const std::vector<core::VideoWavePoint>& timeline,
     const std::array<float, 10>& retention_curve,
     bool show_retention) {
-    draw_rounded_rect(x, y, w, h, 12.0f, Color::rgba(11, 16, 32));
-    draw_rect_outline(x, y, w, h, 1.0f, Color::rgba(56, 70, 102, 110));
+    draw_rounded_rect(x, y, w, h, 14.0f, Color::rgba(11, 17, 34));
+    draw_rect_outline(x, y, w, h, 1.0f, Color::rgba(56, 189, 248, 45));
 
-    const float pad_l = 48.0f;
-    const float pad_r = 16.0f;
-    const float pad_t = 28.0f;
+    const float pad_l = 44.0f;
+    const float pad_r = 14.0f;
+    const float pad_t = 32.0f;
     const float pad_b = 26.0f;
     const float pw = std::max(40.0f, w - pad_l - pad_r);
     const float ph = std::max(40.0f, h - pad_t - pad_b);
@@ -476,12 +526,12 @@ void Renderer2D::draw_wave_telemetry(
 
     for (int i = 0; i <= 4; ++i) {
         const float gy = py + (ph * static_cast<float>(i)) / 4.0f;
-        draw_rect(px, gy, pw, 1.0f, Color::rgba(148, 163, 184, 30));
+        draw_rect(px, gy, pw, 1.0f, Color::rgba(148, 163, 184, 28));
     }
 
     if (show_retention) {
-        draw_text(px, y + 6.0f, "Кривая удержания по децилям (10% - 100%)", 13.0f, Color::rgba(226, 232, 240));
-        const float gap = 6.0f;
+        draw_text_fit(x + 12.0f, y + 8.0f, w - 24.0f, "Удержание аудитории по децилям (10% - 100%)", 13.5f, Color::rgba(226, 232, 240));
+        const float gap = w < 420.0f ? 4.0f : 6.0f;
         const float bw = (pw - gap * 9.0f) / 10.0f;
         for (int i = 0; i < 10; ++i) {
             const float val = std::clamp(retention_curve[static_cast<std::size_t>(i)], 0.0f, 1.0f);
@@ -490,15 +540,18 @@ void Renderer2D::draw_wave_telemetry(
             const Color bc = val >= 0.55f ? Color::rgba(34, 197, 94)
                                           : (val >= 0.35f ? Color::rgba(56, 189, 248) : Color::rgba(244, 63, 94));
             draw_rounded_rect(bx, py + ph - bh, bw, bh, 4.0f, bc);
-            draw_text(bx + 2.0f, py + ph + 5.0f, std::to_string((i + 1) * 10) + "%", 11.0f, Color::rgba(148, 163, 184));
+            if (w >= 420.0f || (i % 2 == 0) || i == 9) {
+                const std::string lbl = std::to_string((i + 1) * 10) + "%";
+                draw_text(bx, py + ph + 5.0f, lbl, 10.5f, Color::rgba(148, 163, 184));
+            }
         }
         return;
     }
 
     if (timeline.empty()) {
-        draw_text(px + 12.0f, py + ph * 0.45f,
-                  "Нажмите «Выпустить ролик», чтобы увидеть волны алгоритма",
-                  13.5f, Color::rgba(148, 163, 184));
+        draw_text_wrapped(x + 16.0f, py + ph * 0.35f, w - 32.0f,
+                          "Запустите публикацию ролика во вкладке «Студия», чтобы в реальном времени отслеживать 48-часовые волны рекомендаций.",
+                          13.5f, Color::rgba(148, 163, 184));
         return;
     }
 
@@ -516,8 +569,8 @@ void Renderer2D::draw_wave_telemetry(
 
     const auto& latest = timeline.back();
     const Color main_col = wave_palette(latest.wave_index);
-    const Color fill_top{main_col.r, main_col.g, main_col.b, 85};
-    const Color fill_bot{main_col.r, main_col.g, main_col.b, 6};
+    const Color fill_top{main_col.r, main_col.g, main_col.b, 92};
+    const Color fill_bot{main_col.r, main_col.g, main_col.b, 8};
     const float wu = atlas_.white_u();
     const float wv = atlas_.white_v();
 
@@ -529,7 +582,6 @@ void Renderer2D::draw_wave_telemetry(
         const float x1 = px + (static_cast<float>(p1.hour_after_publish - 1) / 47.0f) * pw;
         const float y1 = py + ph - (static_cast<float>(p1.views) / max_vf) * ph;
 
-        // Градиент под кривой
         const Vertex2D t0{x0, y0, wu, wv, fill_top.pack_abgr()};
         const Vertex2D t1{x1, y1, wu, wv, fill_top.pack_abgr()};
         const Vertex2D b1{x1, py + ph, wu, wv, fill_bot.pack_abgr()};
@@ -537,38 +589,39 @@ void Renderer2D::draw_wave_telemetry(
         push_tri(t0, t1, b1);
         push_tri(t0, b1, b0);
 
-        draw_line(x0, y0, x1, y1, 2.6f, main_col);
+        draw_line(x0, y0, x1, y1, 2.8f, main_col);
     }
 
     const float hx = px + (static_cast<float>(latest.hour_after_publish - 1) / 47.0f) * pw;
     const float hy = py + ph - (static_cast<float>(latest.views) / max_vf) * ph;
-    draw_circle(hx, hy, 5.0f, main_col);
-    draw_circle(hx, hy, 2.6f, Color::rgba(255, 255, 255));
+    draw_circle(hx, hy, 7.0f, main_col.with_alpha(90));
+    draw_circle(hx, hy, 4.5f, main_col);
+    draw_circle(hx, hy, 2.2f, Color::rgba(255, 255, 255));
 
     char hdr[128];
-    std::snprintf(hdr, sizeof(hdr), "Волна %u • ViralScore %.2f • Обложка %c (%d/48ч)",
+    std::snprintf(hdr, sizeof(hdr), "Волна %u • Viral %.2f • Обл. %c (%d/48ч)",
                   static_cast<unsigned>(latest.wave_index),
                   static_cast<double>(latest.viral_score),
                   latest.active_variant,
                   latest.hour_after_publish);
-    draw_text(px, y + 6.0f, hdr, 13.0f, main_col);
+    draw_text_fit(x + 12.0f, y + 8.0f, w - 24.0f, hdr, 13.5f, main_col);
 }
 
 void Renderer2D::spawn_wave_burst(float cx, float cy, std::uint8_t wave_index) {
     const Color c = wave_palette(wave_index);
-    const int count = wave_index >= 4 ? 32 : 18;
+    const int count = wave_index >= 4 ? 36 : 22;
     constexpr float kTwoPi = 6.28318530718f;
 
     for (int i = 0; i < count; ++i) {
         const float a = (kTwoPi * static_cast<float>(i)) / static_cast<float>(count);
-        const float spd = 55.0f + static_cast<float>((i * 37) % 95);
+        const float spd = 65.0f + static_cast<float>((i * 41) % 105);
         Particle2D p{};
         p.x = cx;
         p.y = cy;
         p.vx = std::cos(a) * spd;
-        p.vy = std::sin(a) * spd - 30.0f;
-        p.max_life = 0.75f;
-        p.radius = 3.2f;
+        p.vy = std::sin(a) * spd - 35.0f;
+        p.max_life = 0.85f;
+        p.radius = 3.6f;
         p.color = c;
         particles_.push_back(p);
     }
@@ -581,7 +634,7 @@ void Renderer2D::step_and_draw_particles(float dt_sec) {
     for (auto& p : particles_) {
         p.life += dt_sec;
         if (p.life >= p.max_life) continue;
-        p.vy += 180.0f * dt_sec;
+        p.vy += 190.0f * dt_sec;
         p.x += p.vx * dt_sec;
         p.y += p.vy * dt_sec;
         const float alpha = 1.0f - (p.life / p.max_life);

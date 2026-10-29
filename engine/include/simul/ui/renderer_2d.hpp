@@ -24,6 +24,10 @@ struct Color {
     static constexpr Color rgba(std::uint8_t r_, std::uint8_t g_, std::uint8_t b_, std::uint8_t a_ = 255) noexcept {
         return {r_, g_, b_, a_};
     }
+
+    constexpr Color with_alpha(std::uint8_t new_a) const noexcept {
+        return {r, g, b, new_a};
+    }
 };
 
 struct Vertex2D {
@@ -47,11 +51,11 @@ struct Particle2D {
 
 /**
  * Нативный батч-рендерер GPU (Direct3D 11 / OpenGL ES 3.0 / Metal / OpenGL 3.3).
- * Отрисовывает весь игровой интерфейс, карточки, кривые волн, частицы и кириллицу за 1 draw call на кадр!
+ * Отрисовывает весь игровой интерфейс, иллюстрацию студии, превью, кривые волн и кириллицу за 1 draw call!
  */
 class Renderer2D {
 public:
-    static constexpr std::size_t kMaxVertices = 65'536;
+    static constexpr std::size_t kMaxVertices = 98'304;
 
     bool init();
     void shutdown();
@@ -63,12 +67,15 @@ public:
     void draw_rounded_rect(float x, float y, float w, float h, float radius, Color color);
     void draw_rect_outline(float x, float y, float w, float h, float thickness, Color color);
     void draw_line(float x0, float y0, float x1, float y1, float thickness, Color color);
-    void draw_circle(float cx, float cy, float radius, Color color, int segments = 14);
+    void draw_circle(float cx, float cy, float radius, Color color, int segments = 16);
+    void draw_triangle(float x0, float y0, float x1, float y1, float x2, float y2, Color color);
 
     void draw_text(float x, float y, std::string_view utf8_text, float font_size_px, Color color);
+    void draw_text_fit(float x, float y, float max_width, std::string_view utf8_text, float max_font_px, Color color);
     void draw_text_wrapped(
         float x, float y, float max_width, std::string_view utf8_text, float font_size_px, Color color, float* out_height = nullptr);
     float measure_text(std::string_view utf8_text, float font_size_px) const noexcept;
+    float measure_text_wrapped(float max_width, std::string_view utf8_text, float font_size_px) const noexcept;
 
     /** Рисует живой график 48-часовых волн алгоритма или гистограмму удержания */
     void draw_wave_telemetry(
@@ -94,8 +101,8 @@ private:
     Utf8FontAtlas atlas_;
     std::vector<Vertex2D> vertices_;
     std::vector<Particle2D> particles_;
-    float screen_w_ = 1280.0f;
-    float screen_h_ = 800.0f;
+    float screen_w_ = 390.0f;
+    float screen_h_ = 844.0f;
 
     std::uint32_t gpu_vbuf_id_ = 0;
     std::uint32_t gpu_img_id_ = 0;
