@@ -47,6 +47,7 @@ if(SIMUL_BUILD_GAME)
         engine/src/ui/utf8_atlas.cpp
         engine/src/ui/renderer_2d.cpp
         engine/src/ui/widgets.cpp
+        game/src/studio_scene.cpp
         game/src/viral_app.cpp
         game/src/main.cpp
     )
@@ -131,6 +132,7 @@ if(SIMUL_BUILD_TESTS AND NOT ANDROID)
         engine/src/ui/utf8_atlas.cpp
         engine/src/ui/renderer_2d.cpp
         engine/src/ui/widgets.cpp
+        game/src/studio_scene.cpp
         game/src/viral_app.cpp
     )
     target_compile_definitions(simul_tests PRIVATE SIMUL_HEADLESS_GFX=1)

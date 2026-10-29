@@ -18,6 +18,7 @@ UI_CXX_SRCS := \
 	engine/src/ui/utf8_atlas.cpp \
 	engine/src/ui/renderer_2d.cpp \
 	engine/src/ui/widgets.cpp \
+	game/src/studio_scene.cpp \
 	game/src/viral_app.cpp
 
 .PHONY: all test bench clean
@@ -42,4 +43,4 @@ bench: build/simul_bench
 	./build/simul_bench
 
 clean:
-	rm -rf build career_slot1.simsave
+	rm -rf build career_slot1.simsave career_autosave.simsave
