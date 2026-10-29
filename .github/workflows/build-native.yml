@@ -10,6 +10,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   tests-and-bench:
     name: C++20 Engine Tests & 100k Benchmark (Linux x64)
@@ -85,10 +88,6 @@ jobs:
           ANDROID_JAR="$PLATFORM_DIR/android.jar"
           LLVM_BIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
-          echo "Using NDK: $NDK_ROOT"
-          echo "Using Build-Tools: $BUILD_TOOLS"
-          echo "Using Platform JAR: $ANDROID_JAR"
-
           cmake -B build-android -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
@@ -149,3 +148,41 @@ jobs:
           name: ViralSimul-Android-arm64-apk
           path: ViralSimul-Android-arm64.apk
           if-no-files-found: error
+
+  publish-latest-release:
+    name: Publish Direct .apk & .exe Release (main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [tests-and-bench, build-windows-exe, build-android-apk]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Built Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+
+      - name: Create or Update Rolling 'latest' GitHub Release with .apk & .exe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -lh dist-artifacts
+          NOTES="Автоматическая нативная сборка C++20 движка и игры **ВИРАЛ** из коммита \`${GITHUB_SHA::7}\`:
+          - **Android ARM64 (\`ViralSimul-Android-arm64.apk\`)** — чистое C++20 \`NativeActivity\` приложение (OpenGL ES 3.0 + AAudio, 0% WebView).
+          - **Windows x64 (\`ViralSimul-Windows-x64.exe\`)** — автономный однофайловый Direct3D 11 + WASAPI клиент без внешних DLL."
+
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest \
+              dist-artifacts/ViralSimul-Android-arm64.apk \
+              dist-artifacts/ViralSimul-Windows-x64.exe \
+              --clobber
+            gh release edit latest --notes "$NOTES"
+          else
+            gh release create latest \
+              dist-artifacts/ViralSimul-Android-arm64.apk \
+              dist-artifacts/ViralSimul-Windows-x64.exe \
+              --title "ВИРАЛ — Свежая автосборка (.apk + .exe)" \
+              --notes "$NOTES"
+          fi
