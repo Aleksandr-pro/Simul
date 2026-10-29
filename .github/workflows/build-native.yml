@@ -1,0 +1,151 @@
+name: Simul Native Builds (.exe & .apk)
+
+on:
+  push:
+    branches:
+      - main
+      - "arena/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  tests-and-bench:
+    name: C++20 Engine Tests & 100k Benchmark (Linux x64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build and run C++20 tests & 100k SoA benchmark
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DSIMUL_BUILD_GAME=OFF -DSIMUL_BUILD_TESTS=ON
+          cmake --build build -j$(nproc)
+          ./build/simul_tests
+          ./build/simul_bench
+
+  build-windows-exe:
+    name: Windows x64 Native Standalone (.exe)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure & Build Native Direct3D 11 .exe (MSVC Static CRT)
+        shell: pwsh
+        run: |
+          cmake -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DSIMUL_BUILD_GAME=ON -DSIMUL_BUILD_TESTS=ON
+          cmake --build build --config Release --parallel
+
+      - name: Run Native Windows Engine Unit Tests
+        shell: pwsh
+        run: |
+          $testBin = Get-ChildItem -Path build -Recurse -Filter "simul_tests.exe" | Select-Object -First 1
+          if (-not $testBin) { throw "simul_tests.exe not found" }
+          & $testBin.FullName
+
+      - name: Stage ViralSimul-Windows-x64.exe
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path build -Recurse -Filter "ViralSimul.exe" | Select-Object -First 1
+          if (-not $exe) { throw "ViralSimul.exe not found" }
+          Copy-Item $exe.FullName -Destination "ViralSimul-Windows-x64.exe"
+          $sizeKB = [math]::Round((Get-Item "ViralSimul-Windows-x64.exe").Length / 1KB, 1)
+          Write-Host "Built standalone ViralSimul-Windows-x64.exe ($sizeKB KB)"
+
+      - name: Upload Windows .exe Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViralSimul-Windows-x64-exe
+          path: ViralSimul-Windows-x64.exe
+          if-no-files-found: error
+
+  build-android-apk:
+    name: Android ARM64 NativeActivity (.apk)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17 (for keytool & apksigner)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cross-compile C++20 ARM64 NativeActivity & Package Signed .apk
+        run: |
+          set -euo pipefail
+
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          NDK_ROOT="${ANDROID_NDK_LATEST_HOME:-$(ls -1d "$SDK_ROOT/ndk/"* | sort -V | tail -n 1)}"
+          BUILD_TOOLS="$(ls -1d "$SDK_ROOT/build-tools/"* | sort -V | tail -n 1)"
+          PLATFORM_DIR="$(ls -1d "$SDK_ROOT/platforms/android-"* | sort -V | tail -n 1)"
+          ANDROID_JAR="$PLATFORM_DIR/android.jar"
+          LLVM_BIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          echo "Using NDK: $NDK_ROOT"
+          echo "Using Build-Tools: $BUILD_TOOLS"
+          echo "Using Platform JAR: $ANDROID_JAR"
+
+          cmake -B build-android -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSIMUL_BUILD_GAME=ON \
+            -DSIMUL_BUILD_TESTS=OFF
+
+          cmake --build build-android -j$(nproc)
+
+          "$LLVM_BIN/llvm-strip" --strip-unneeded build-android/libsimul_viral.so
+          "$LLVM_BIN/llvm-nm" -D build-android/libsimul_viral.so | grep ANativeActivity_onCreate
+
+          mkdir -p apk_work/compiled_res apk_work/root/lib/arm64-v8a
+
+          "$BUILD_TOOLS/aapt2" compile \
+            --dir game/android/res \
+            -o apk_work/compiled_res/res.zip
+
+          "$BUILD_TOOLS/aapt2" link \
+            -o apk_work/unaligned.apk \
+            --manifest game/android/AndroidManifest.xml \
+            -I "$ANDROID_JAR" \
+            apk_work/compiled_res/res.zip
+
+          cp build-android/libsimul_viral.so apk_work/root/lib/arm64-v8a/libsimul_viral.so
+          (cd apk_work/root && zip -0 -r ../unaligned.apk lib/arm64-v8a/libsimul_viral.so)
+
+          "$BUILD_TOOLS/zipalign" -f -p 4 apk_work/unaligned.apk apk_work/aligned.apk
+
+          keytool -genkeypair -v \
+            -keystore apk_work/simul.keystore \
+            -storepass simul2026 \
+            -keypass simul2026 \
+            -alias simulkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Simul Native, OU=Engine, O=Simul, L=Aktobe, S=Aktobe, C=KZ"
+
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks apk_work/simul.keystore \
+            --ks-pass pass:simul2026 \
+            --key-pass pass:simul2026 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out ViralSimul-Android-arm64.apk \
+            apk_work/aligned.apk
+
+          "$BUILD_TOOLS/apksigner" verify --verbose ViralSimul-Android-arm64.apk
+          ls -lh ViralSimul-Android-arm64.apk
+
+      - name: Upload Android .apk Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViralSimul-Android-arm64-apk
+          path: ViralSimul-Android-arm64.apk
+          if-no-files-found: error

@@ -1,19 +1,18 @@
-# Dependencies
-node_modules/
-.npm/
-
-# Build outputs
-dist/
+# C++ / CMake / Android native build outputs
 build/
+build-*/
+apk_work/
 out/
-coverage/
-*.tsbuildinfo
-
-# Caches & tooling
-.vite/
-.turbo/
-.cache/
-.pytest_cache/
+dist/
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+*.exe
+*.apk
+*.keystore
+*.simsave
 
 # Environment & secrets (NEVER commit real keys)
 .env
