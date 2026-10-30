@@ -413,6 +413,7 @@ void App::updatePlaying(float dt) {
 
     breakCooldown_ -= dt;
     placeCooldown_ -= dt;
+    if (attackCooldown_ > 0.0f) attackCooldown_ -= dt;
     if (breakHeld_ && breakCooldown_ <= 0.0f) {
         tryEdit(true);
         breakCooldown_ = 0.24f;
@@ -697,7 +698,10 @@ void App::handleKeyDown(const sapp_event* ev) {
                 addToast(local_.flying ? "Полёт включён" : "Полёт выключен");
             }
         } else if (ev->key_code == SAPP_KEYCODE_Q) {
-            client_.sendAttack();
+            if (attackCooldown_ <= 0.0f) {
+                client_.sendAttack();
+                attackCooldown_ = 0.35f;
+            }
         } else if (ev->key_code == SAPP_KEYCODE_E) {
             triggerExplosion();
         } else if (ev->key_code == SAPP_KEYCODE_TAB) {
@@ -765,6 +769,11 @@ void App::handleTouchBegan(const sapp_event* ev) {
         }
         if (layout.fly.contains(x, y)) {
             if (mode_ == GameMode::Sandbox) local_.flying = !local_.flying;
+            continue;
+        }
+        if (layout.attack.contains(x, y)) {
+            client_.sendAttack();
+            attackCooldown_ = 0.35f;
             continue;
         }
         for (int slotIndex = 0; slotIndex < 9; ++slotIndex) {

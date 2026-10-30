@@ -112,6 +112,7 @@ struct TouchLayout {
     Rect placeBlock;
     Rect explode;
     Rect fly;
+    Rect attack;
     Rect hotbar[9];
     Rect slot(Rect r) const { return r; }
 };

@@ -159,6 +159,26 @@ TEST(hud_phone_layout_fits_screen) {
     CHECK(layout.stick.y + layout.stick.h <= static_cast<float>(h));
     CHECK(layout.breakBlock.x + layout.breakBlock.w <= static_cast<float>(w));
     CHECK(layout.jump.y >= 0.0f);
+    CHECK(layout.attack.x + layout.attack.w <= static_cast<float>(w));
+    CHECK(layout.attack.y + layout.attack.h <= static_cast<float>(h));
+    // кнопки действий не налезают друг на друга
+    const Rect buttons[6] = {layout.jump, layout.breakBlock, layout.placeBlock,
+                             layout.explode, layout.fly, layout.attack};
+    for (int i = 0; i < 6; ++i) {
+        for (int j = i + 1; j < 6; ++j) {
+            const bool overlap = buttons[i].x < buttons[j].x + buttons[j].w &&
+                                 buttons[j].x < buttons[i].x + buttons[i].w &&
+                                 buttons[i].y < buttons[j].y + buttons[j].h &&
+                                 buttons[j].y < buttons[i].y + buttons[i].h;
+            CHECK(!overlap);
+        }
+    }
+    // стик не пересекается с кнопками действий
+    for (const Rect& b : buttons) {
+        const bool overlap = layout.stick.x < b.x + b.w && b.x < layout.stick.x + layout.stick.w &&
+                             layout.stick.y < b.y + b.h && b.y < layout.stick.y + layout.stick.h;
+        CHECK(!overlap);
+    }
     for (int i = 0; i < 9; ++i) {
         CHECK(layout.hotbar[i].w > 0.0f);
         CHECK(layout.hotbar[i].x + layout.hotbar[i].w <= static_cast<float>(w));

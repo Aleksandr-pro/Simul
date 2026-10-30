@@ -145,6 +145,7 @@ const TouchLayout& Hud::layout(int width, int height) {
     touch_.placeBlock = Rect{col0, row1, btn, btn};
     touch_.explode = Rect{col1, row1, btn, btn};
     touch_.fly = Rect{col0, row2, btn, btn};
+    touch_.attack = Rect{col1, row2, btn, btn};
 
     const float slotSize = 52.0f * s;
     const float gap = 6.0f * s;
@@ -497,6 +498,7 @@ void Hud::drawTouchControls(const HudModel& model, const HudInput& input) {
     padButton(tl.placeBlock, "СТАВ", 120, 220, 150);
     padButton(tl.explode, "ТНТ", 240, 100, 90);
     padButton(tl.fly, "ПОЛЁТ", 180, 160, 255);
+    padButton(tl.attack, "УДАР", 255, 120, 150);
 }
 
 void Hud::drawPaused(const HudModel& model, const HudInput& input, HudResult& result) {

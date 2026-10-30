@@ -126,6 +126,7 @@ private:
     bool placeHeld_ = false;
     float breakCooldown_ = 0.0f;
     float placeCooldown_ = 0.0f;
+    float attackCooldown_ = 0.0f;
     float inputAccumulator_ = 0.0f;
     float pingAccumulator_ = 0.0f;
     float joinTimer_ = 0.0f;
