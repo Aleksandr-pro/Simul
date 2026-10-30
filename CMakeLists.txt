@@ -19,6 +19,14 @@ endif()
 option(RAZLOM_BUILD_CLIENT "Собрать нативный клиент (sokol: D3D11 / GL / GLES3)" ON)
 option(RAZLOM_BUILD_TESTS "Собрать автотесты и бенчмарк ядра" ON)
 
+# Общие пути включения: нужны и клиенту, и тестам интерфейса, и CPU-превью.
+set(RAZLOM_INCLUDES
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sokol
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts
+)
+
 # ---------------------------------------------------------------- ядро
 add_library(razlom_core STATIC
     src/core/fluids.cpp
@@ -32,6 +40,7 @@ add_library(razlom_core STATIC
     src/net/socket.cpp
 )
 target_include_directories(razlom_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(razlom_core PUBLIC ${RAZLOM_INCLUDES})
 
 find_package(Threads REQUIRED)
 target_link_libraries(razlom_core PUBLIC Threads::Threads)
@@ -76,13 +85,6 @@ set(RAZLOM_CLIENT_SOURCES
 )
 
 if(RAZLOM_BUILD_CLIENT)
-    set(RAZLOM_INCLUDES
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sokol
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts
-    )
-
     if(ANDROID)
         add_library(razlom SHARED ${RAZLOM_CLIENT_SOURCES})
         target_include_directories(razlom PRIVATE ${RAZLOM_INCLUDES})
