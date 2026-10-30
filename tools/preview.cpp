@@ -282,6 +282,8 @@ razlom::client::HudModel baseModel(razlom::client::Screen screen) {
     model.toast = "Мир готов — зовите друзей по ссылке";
     model.toastTimer = 2.0f;
     model.showTouch = false;
+    // та же диагностическая строка, что клиент показывает в игре (Renderer::statsLine)
+    model.stats = "GLES3 · 2340x1080 · 34 выз. · 27 чанков";
     razlom::client::HudPlayerRow self;
     self.name = "Игрок";
     self.health = 82;

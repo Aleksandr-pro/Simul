@@ -208,4 +208,31 @@ TEST(hud_catalog_launch_buttons) {
     CHECK(d.vertices > 100);
 }
 
+// Диагностика кадра видна и на игровом экране: по скриншоту с телефона сразу
+// понятно, сколько вызовов отрисовки и чанков дошло до экрана (этим мы и
+// отлаживали «HUD есть, мира нет»).
+TEST(hud_playing_shows_frame_stats) {
+    Hud hud;
+    hud.init(&atlas());
+    HudModel model = menuModel();
+    model.screen = Screen::Playing;
+    model.showTouch = false;
+    HudInput input;
+    input.width = 1280;
+    input.height = 760;
+    HudResult result;
+
+    model.stats.clear();
+    hud.draw(model, input, result);
+    const size_t withoutStats = hud.vertices().size();
+
+    model.stats = "GLES3 · 2340x1080 · 30 выз. · 12 чанков";
+    hud.draw(model, input, result);
+    CHECK(hud.vertices().size() > withoutStats);
+
+    float maxX = 0.0f;
+    for (const auto& v : hud.vertices()) maxX = std::max(maxX, v.x);
+    CHECK(maxX <= static_cast<float>(input.width) + 1.0f);
+}
+
 int main() { return test::runAll(); }
