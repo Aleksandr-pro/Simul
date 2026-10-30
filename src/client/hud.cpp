@@ -374,6 +374,15 @@ void Hud::drawPlaying(const HudModel& model, const HudInput& input, HudResult& r
         text(28.0f * s, 131.0f * s, link, kAccent2R, kAccent2G, kAccent2B, 235, 0.56f * s);
     }
 
+    // --- диагностика кадра: по скриншоту видно, дошёл ли мир до экрана ---
+    // (сколько вызовов отрисовки и чанков в кадре; на меню-экране эта же строка внизу)
+    if (!model.stats.empty()) {
+        const float dbgY = 164.0f * s;
+        const float dbgW = measure(model.stats, 0.56f * s) + 28.0f * s;
+        rect(14.0f * s, dbgY, dbgW, 34.0f * s, 10, 12, 18, 170);
+        text(28.0f * s, dbgY + 7.0f * s, model.stats, kMutedR, kMutedG, kMutedB, 190, 0.56f * s);
+    }
+
     // --- игроки ---
     const float listW = 250.0f * s;
     const float listX = w - listW - 14.0f * s;

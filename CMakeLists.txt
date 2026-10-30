@@ -61,6 +61,11 @@ if(RAZLOM_BUILD_TESTS AND NOT ANDROID)
     target_link_libraries(razlom_tests PRIVATE razlom_core)
     add_test(NAME razlom_tests COMMAND razlom_tests)
 
+    # Исходники шейдеров: ловят то, чего не видно без GPU (uniform-блоки в GLSL и т.п.)
+    add_executable(razlom_shader_tests tests/test_shaders.cpp)
+    target_include_directories(razlom_shader_tests PRIVATE ${RAZLOM_INCLUDES})
+    add_test(NAME razlom_shader_tests COMMAND razlom_shader_tests)
+
     add_executable(razlom_ui_tests tests/test_ui.cpp src/client/font.cpp src/client/hud.cpp)
     target_link_libraries(razlom_ui_tests PRIVATE razlom_core)
     target_include_directories(razlom_ui_tests PRIVATE ${RAZLOM_INCLUDES})
