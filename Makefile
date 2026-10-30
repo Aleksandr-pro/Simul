@@ -69,9 +69,15 @@ $(BUILD)/razlom_ui_tests: tests/test_ui.cpp src/client/font.cpp src/client/hud.c
 	@mkdir -p $(BUILD)/tests
 	$(CXX) $(CXXFLAGS) tests/test_ui.cpp src/client/font.cpp src/client/hud.cpp -o $@
 
-test: $(BUILD)/razlom_tests $(BUILD)/razlom_ui_tests
+# Исходники шейдеров: ловят ошибки, которые не видны на CPU-превью (uniform-блоки).
+$(BUILD)/razlom_shader_tests: tests/test_shaders.cpp include/razlom/client/shaders.hpp
+	@mkdir -p $(BUILD)/tests
+	$(CXX) $(CXXFLAGS) tests/test_shaders.cpp -o $@
+
+test: $(BUILD)/razlom_tests $(BUILD)/razlom_ui_tests $(BUILD)/razlom_shader_tests
 	./$(BUILD)/razlom_tests
 	./$(BUILD)/razlom_ui_tests
+	./$(BUILD)/razlom_shader_tests
 
 bench: $(BUILD)/razlom_bench
 	./$(BUILD)/razlom_bench

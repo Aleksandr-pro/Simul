@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string>
 
+#include "razlom/client/shaders.hpp"
 #include "razlom/core/blocks.hpp"
 #include "sokol_app.h"
 #include "sokol_glue.h"
@@ -54,253 +55,6 @@ void pushCube(std::vector<Vertex3D>& out, const Vec3& min, const Vec3& max, uint
         for (int i : {0, 1, 2, 0, 2, 3}) out.push_back(quad[i]);
     }
 }
-
-const char* kWorldVsBody = R"(
-layout(std140) uniform vs_params {
-    mat4 mvp;
-    vec4 fog;
-    vec4 wave;
-};
-in vec3 position;
-in vec4 color;
-out vec4 v_color;
-out float v_fog;
-out vec3 v_fogColor;
-void main() {
-    vec4 clip = mvp * vec4(position, 1.0);
-    gl_Position = clip;
-    v_color = color;
-    v_fog = clamp(1.0 - exp(-max(clip.w, 0.0) * fog.a), 0.0, 1.0);
-    v_fogColor = fog.rgb;
-}
-)";
-
-const char* kWorldFsBody = R"(
-in vec4 v_color;
-in float v_fog;
-in vec3 v_fogColor;
-out vec4 frag_color;
-void main() {
-    frag_color = vec4(mix(v_color.rgb, v_fogColor, v_fog), v_color.a);
-}
-)";
-
-const char* kWaterVsBody = R"(
-layout(std140) uniform vs_params {
-    mat4 mvp;
-    vec4 fog;
-    vec4 wave;
-};
-in vec3 position;
-in vec4 color;
-out vec4 v_color;
-out float v_fog;
-out vec3 v_fogColor;
-void main() {
-    vec3 p = position;
-    p.y += sin(wave.x * 2.1 + p.x * 0.9 + p.z * 0.7) * wave.y;
-    vec4 clip = mvp * vec4(p, 1.0);
-    gl_Position = clip;
-    v_color = color;
-    v_fog = clamp(1.0 - exp(-max(clip.w, 0.0) * fog.a), 0.0, 1.0);
-    v_fogColor = fog.rgb;
-}
-)";
-
-const char* kWaterFsBody = R"(
-in vec4 v_color;
-in float v_fog;
-in vec3 v_fogColor;
-out vec4 frag_color;
-void main() {
-    frag_color = vec4(mix(v_color.rgb, v_fogColor, v_fog), 0.72 * v_color.a);
-}
-)";
-
-// Позиции интерфейса приходят уже в NDC (пересчёт на CPU): у шейдера нет
-// ни uniform-блока, ни делений — меньше мест, где что-то может отвалиться.
-const char* kUiVsBody = R"(
-in vec2 position;
-in vec2 uv;
-in vec4 color;
-out vec2 v_uv;
-out vec4 v_color;
-void main() {
-    gl_Position = vec4(position, 0.0, 1.0);
-    v_uv = uv;
-    v_color = color;
-}
-)";
-
-const char* kUiFsBody = R"(
-uniform sampler2D u_tex;
-in vec2 v_uv;
-in vec4 v_color;
-out vec4 frag_color;
-void main() {
-    frag_color = v_color * texture(u_tex, v_uv);
-}
-)";
-
-const char* kSkyVsBody = R"(
-in vec2 position;
-in vec4 color;
-out vec4 v_color;
-void main() {
-    gl_Position = vec4(position, 1.0, 1.0);
-    v_color = color;
-}
-)";
-
-const char* kSkyFsBody = R"(
-in vec4 v_color;
-out vec4 frag_color;
-void main() {
-    frag_color = v_color;
-}
-)";
-
-// ---------------------------------------------------------------- HLSL (D3D11)
-
-const char* kWorldVsHlsl = R"(
-cbuffer vs_params : register(b0) {
-    float4x4 mvp;
-    float4 fog;
-    float4 wave;
-};
-struct vs_in {
-    float3 position : POSITION;
-    float4 color : COLOR0;
-};
-struct vs_out {
-    float4 pos : SV_Position;
-    float4 color : COLOR0;
-    float fog : TEXCOORD0;
-    float3 fogColor : TEXCOORD1;
-};
-vs_out main(vs_in inp) {
-    vs_out o;
-    float4 clip = mul(mvp, float4(inp.position, 1.0));
-    o.pos = clip;
-    o.color = inp.color;
-    o.fog = saturate(1.0 - exp(-max(clip.w, 0.0) * fog.a));
-    o.fogColor = fog.rgb;
-    return o;
-}
-)";
-
-const char* kWorldFsHlsl = R"(
-struct fs_in {
-    float4 pos : SV_Position;
-    float4 color : COLOR0;
-    float fog : TEXCOORD0;
-    float3 fogColor : TEXCOORD1;
-};
-float4 main(fs_in inp) : SV_Target {
-    return float4(lerp(inp.color.rgb, inp.fogColor, inp.fog), inp.color.a);
-}
-)";
-
-const char* kWaterVsHlsl = R"(
-cbuffer vs_params : register(b0) {
-    float4x4 mvp;
-    float4 fog;
-    float4 wave;
-};
-struct vs_in {
-    float3 position : POSITION;
-    float4 color : COLOR0;
-};
-struct vs_out {
-    float4 pos : SV_Position;
-    float4 color : COLOR0;
-    float fog : TEXCOORD0;
-    float3 fogColor : TEXCOORD1;
-};
-vs_out main(vs_in inp) {
-    vs_out o;
-    float3 p = inp.position;
-    p.y += sin(wave.x * 2.1 + p.x * 0.9 + p.z * 0.7) * wave.y;
-    float4 clip = mul(mvp, float4(p, 1.0));
-    o.pos = clip;
-    o.color = inp.color;
-    o.fog = saturate(1.0 - exp(-max(clip.w, 0.0) * fog.a));
-    o.fogColor = fog.rgb;
-    return o;
-}
-)";
-
-const char* kWaterFsHlsl = R"(
-struct fs_in {
-    float4 pos : SV_Position;
-    float4 color : COLOR0;
-    float fog : TEXCOORD0;
-    float3 fogColor : TEXCOORD1;
-};
-float4 main(fs_in inp) : SV_Target {
-    return float4(lerp(inp.color.rgb, inp.fogColor, inp.fog), 0.72 * inp.color.a);
-}
-)";
-
-const char* kUiVsHlsl = R"(
-struct vs_in {
-    float2 position : POSITION;
-    float2 uv : TEXCOORD0;
-    float4 color : COLOR0;
-};
-struct vs_out {
-    float4 pos : SV_Position;
-    float2 uv : TEXCOORD0;
-    float4 color : COLOR0;
-};
-vs_out main(vs_in inp) {
-    vs_out o;
-    o.pos = float4(inp.position, 0.0, 1.0);
-    o.uv = inp.uv;
-    o.color = inp.color;
-    return o;
-}
-)";
-
-const char* kUiFsHlsl = R"(
-Texture2D tex : register(t0);
-SamplerState smp : register(s0);
-struct fs_in {
-    float4 pos : SV_Position;
-    float2 uv : TEXCOORD0;
-    float4 color : COLOR0;
-};
-float4 main(fs_in inp) : SV_Target {
-    return tex.Sample(smp, inp.uv) * inp.color;
-}
-)";
-
-const char* kSkyVsHlsl = R"(
-struct vs_in {
-    float2 position : POSITION;
-    float4 color : COLOR0;
-};
-struct vs_out {
-    float4 pos : SV_Position;
-    float4 color : COLOR0;
-};
-vs_out main(vs_in inp) {
-    vs_out o;
-    o.pos = float4(inp.position, 1.0, 1.0);
-    o.color = inp.color;
-    return o;
-}
-)";
-
-const char* kSkyFsHlsl = R"(
-struct fs_in {
-    float4 pos : SV_Position;
-    float4 color : COLOR0;
-};
-float4 main(fs_in inp) : SV_Target {
-    return inp.color;
-}
-)";
 
 sg_blend_state alphaBlend() {
     sg_blend_state b{};
@@ -463,15 +217,16 @@ bool Renderer::initShaders() {
             ub.size = sizeof(WorldParams);
             ub.layout = SG_UNIFORMLAYOUT_STD140;
             ub.hlsl_register_b_n = 0;
+            static_assert(shaders::kWorldUniformCount == 3, "WorldParams: mvp, fog, wave");
             ub.glsl_uniforms[0].type = SG_UNIFORMTYPE_MAT4;
             ub.glsl_uniforms[0].array_count = 0;
-            ub.glsl_uniforms[0].glsl_name = "mvp";
+            ub.glsl_uniforms[0].glsl_name = shaders::kWorldUniformNames[0];
             ub.glsl_uniforms[1].type = SG_UNIFORMTYPE_FLOAT4;
             ub.glsl_uniforms[1].array_count = 0;
-            ub.glsl_uniforms[1].glsl_name = "fog";
+            ub.glsl_uniforms[1].glsl_name = shaders::kWorldUniformNames[1];
             ub.glsl_uniforms[2].type = SG_UNIFORMTYPE_FLOAT4;
             ub.glsl_uniforms[2].array_count = 0;
-            ub.glsl_uniforms[2].glsl_name = "wave";
+            ub.glsl_uniforms[2].glsl_name = shaders::kWorldUniformNames[2];
         }
 
         if (textured) {
@@ -490,14 +245,14 @@ bool Renderer::initShaders() {
         return desc;
     };
 
-    const std::string worldVs = hlsl ? std::string(kWorldVsHlsl) : glsl(kWorldVsBody);
-    const std::string worldFs = hlsl ? std::string(kWorldFsHlsl) : glsl(kWorldFsBody);
-    const std::string waterVs = hlsl ? std::string(kWaterVsHlsl) : glsl(kWaterVsBody);
-    const std::string waterFs = hlsl ? std::string(kWaterFsHlsl) : glsl(kWaterFsBody);
-    const std::string uiVs = hlsl ? std::string(kUiVsHlsl) : glsl(kUiVsBody);
-    const std::string uiFs = hlsl ? std::string(kUiFsHlsl) : glsl(kUiFsBody);
-    const std::string skyVs = hlsl ? std::string(kSkyVsHlsl) : glsl(kSkyVsBody);
-    const std::string skyFs = hlsl ? std::string(kSkyFsHlsl) : glsl(kSkyFsBody);
+    const std::string worldVs = hlsl ? std::string(shaders::kWorldVsHlsl) : glsl(shaders::kWorldVsGlsl);
+    const std::string worldFs = hlsl ? std::string(shaders::kWorldFsHlsl) : glsl(shaders::kWorldFsGlsl);
+    const std::string waterVs = hlsl ? std::string(shaders::kWaterVsHlsl) : glsl(shaders::kWaterVsGlsl);
+    const std::string waterFs = hlsl ? std::string(shaders::kWaterFsHlsl) : glsl(shaders::kWaterFsGlsl);
+    const std::string uiVs = hlsl ? std::string(shaders::kUiVsHlsl) : glsl(shaders::kUiVsGlsl);
+    const std::string uiFs = hlsl ? std::string(shaders::kUiFsHlsl) : glsl(shaders::kUiFsGlsl);
+    const std::string skyVs = hlsl ? std::string(shaders::kSkyVsHlsl) : glsl(shaders::kSkyVsGlsl);
+    const std::string skyFs = hlsl ? std::string(shaders::kSkyFsHlsl) : glsl(shaders::kSkyFsGlsl);
 
     sg_shader_desc worldDesc = makeShader(worldVs.c_str(), worldFs.c_str(), "razlom-world", true, false, false);
     worldShader_ = sg_make_shader(worldDesc);
