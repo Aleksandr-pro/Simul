@@ -4,6 +4,16 @@
 
 > Нативный **C++20** клиент и сервер на **sokol** (D3D11 / OpenGL / OpenGL ES 3.0). Без WebView, без Java, без Unity/Godot — один лёгкий бинарник под Windows, Linux и Android.
 
+![Мир РАЗЛОМ: стартовая сцена](docs/preview/spawn-view.png)
+
+<p align="center">
+  <img src="docs/preview/menu-phone.png" width="49%" alt="Меню на телефоне">
+  <img src="docs/preview/playing-phone.png" width="49%" alt="Игра на телефоне">
+</p>
+
+*Это настоящие кадры клиента, снятые CPU-превью (`make preview`) — тот же мешер, тот же
+HUD, те же цвета. Сняты на 2340×1080 и 1600×900.*
+
 ---
 
 ## Что уже работает (вертикальный срез ядра)
