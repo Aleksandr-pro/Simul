@@ -32,6 +32,9 @@ jobs:
       - name: Автотесты интерфейса (шрифт, раскладка, кнопки)
         run: ./build/razlom_ui_tests
 
+      - name: Автотесты шейдеров (uniform-блоки GLSL, имена uniform'ов, точки входа)
+        run: ./build/razlom_shader_tests
+
       - name: CPU-превью кадров (без GPU)
         run: |
           mkdir -p preview
