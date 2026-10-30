@@ -151,16 +151,13 @@ jobs:
 
           "$BUILD_TOOLS/zipalign" -f -p 4 apk_work/unaligned.apk apk_work/aligned.apk
 
-          keytool -genkeypair -v \
-            -keystore apk_work/razlom.keystore \
-            -storepass razlom2026 \
-            -keypass razlom2026 \
-            -alias razlomkey \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Razlom, OU=Sazndbox, O=Razlom, L=Aktobe, S=Aktobe, C=KZ"
-
+          # Отладочный ключ лежит в репозитории намеренно: подпись должна быть
+          # одинаковой от сборки к сборке, иначе Android не даёт поставить новую
+          # версию поверх старой («приложение не установлено»). В магазин такой
+          # APK не идёт — он только для сайдлоада.
           "$BUILD_TOOLS/apksigner" sign \
-            --ks apk_work/razlom.keystore \
+            --ks game/android/debug.p12 \
+            --ks-key-alias razlomkey \
             --ks-pass pass:razlom2026 \
             --key-pass pass:razlom2026 \
             --v1-signing-enabled true \
