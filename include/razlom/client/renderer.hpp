@@ -70,7 +70,12 @@ public:
 
     void resetWorld(World& world);
     void render(const FrameData& frame);
+    // Загружает атлас шрифта. Возвращает false, если текстура не создалась —
+    // тогда интерфейс рисуется без текста (панели и кнопки остаются видны).
     bool initFontTexture(const uint8_t* rgba, int size);
+    bool fontReady() const { return fontOk_; }
+    // Короткая строка для нижней панели: бэкенд, размер, число вызовов отрисовки.
+    std::string statsLine() const;
 
     void setScreenSize(int width, int height) {
         width_ = width;
@@ -81,6 +86,9 @@ public:
     int drawCalls() const { return drawCalls_; }
     int visibleChunks() const { return visibleChunks_; }
     static constexpr int kFontAtlasSize = 512;
+    // Фиксированные буферы кадра: создаются один раз, без пересоздания в кадре.
+    static constexpr size_t kMaxUiVertices = 32768;
+    static constexpr size_t kMaxDynamicVertices = 32768;
 
 private:
     struct ChunkGpu {
@@ -112,6 +120,7 @@ private:
     std::vector<ChunkGpu> chunks_;
     ChunkMesh scratchMesh_;
     std::vector<Vertex3D> dynamicVertices_;
+    std::vector<UiVertex> uiNdc_;
 
     sg_shader worldShader_{};
     sg_shader waterShader_{};
@@ -134,6 +143,13 @@ private:
     sg_image fontImage_{};
     sg_view fontView_{};
     sg_sampler fontSampler_{};
+    // 1x1 белая текстура: страховка, чтобы интерфейс рисовался даже без атласа.
+    sg_image whiteImage_{};
+    sg_view whiteView_{};
+    sg_view uiView() const { return fontView_.id != 0 ? fontView_ : whiteView_; }
+    bool fontOk_ = false;
+    bool ensureWhiteTexture();
+    const char* backendName_ = "?";
 };
 
 }  // namespace razlom::client

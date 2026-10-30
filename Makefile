@@ -10,7 +10,7 @@ CLIENT_SRC := $(wildcard src/client/*.cpp)
 CORE_OBJ   := $(patsubst src/%.cpp,$(BUILD)/%.o,$(CORE_SRC))
 CLIENT_OBJ := $(patsubst src/%.cpp,$(BUILD)/%.o,$(CLIENT_SRC))
 
-.PHONY: all clean test bench check-client server
+.PHONY: all clean test bench check-client server preview
 
 all: $(BUILD)/razlom $(BUILD)/razlom_server $(BUILD)/razlom_tests $(BUILD)/razlom_bench
 
@@ -46,15 +46,32 @@ $(BUILD)/client/main.o: src/client/main.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+# Только синтаксис/семантика: без .o и без .d, чтобы не сорить в репозитории.
 check-client:
+	@mkdir -p $(BUILD)/syntax
 	@for f in $(CLIENT_SRC) src/client/main.cpp; do \
 		echo "syntax: $$f"; \
-		$(CXX) $(CXXFLAGS) -fsyntax-only $$f || exit 1; \
+		$(CXX) $(CXXFLAGS) -MMD -MF $(BUILD)/syntax/$$(basename $$f).d -fsyntax-only $$f || exit 1; \
 	done
 	@echo "клиентские исходники компилируются"
 
-test: $(BUILD)/razlom_tests
+# CPU-превью интерфейса и мира (без GPU): PNG-кадры в build/preview/out
+preview: $(BUILD)/razlom_preview
+	@mkdir -p $(BUILD)/preview/out
+	./$(BUILD)/razlom_preview $(BUILD)/preview/out
+
+$(BUILD)/razlom_preview: tools/preview.cpp src/core/world.cpp src/core/worldgen.cpp src/core/mesher.cpp \
+		src/core/structure.cpp src/core/fluids.cpp src/core/session.cpp src/client/font.cpp src/client/hud.cpp
+	@mkdir -p $(BUILD)/preview
+	$(CXX) $(CXXFLAGS) $^ -o $@
+
+$(BUILD)/razlom_ui_tests: tests/test_ui.cpp src/client/font.cpp src/client/hud.cpp
+	@mkdir -p $(BUILD)/tests
+	$(CXX) $(CXXFLAGS) tests/test_ui.cpp src/client/font.cpp src/client/hud.cpp -o $@
+
+test: $(BUILD)/razlom_tests $(BUILD)/razlom_ui_tests
 	./$(BUILD)/razlom_tests
+	./$(BUILD)/razlom_ui_tests
 
 bench: $(BUILD)/razlom_bench
 	./$(BUILD)/razlom_bench

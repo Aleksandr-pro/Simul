@@ -52,6 +52,15 @@ if(RAZLOM_BUILD_TESTS AND NOT ANDROID)
     target_link_libraries(razlom_tests PRIVATE razlom_core)
     add_test(NAME razlom_tests COMMAND razlom_tests)
 
+    add_executable(razlom_ui_tests tests/test_ui.cpp src/client/font.cpp src/client/hud.cpp)
+    target_link_libraries(razlom_ui_tests PRIVATE razlom_core)
+    target_include_directories(razlom_ui_tests PRIVATE ${RAZLOM_INCLUDES})
+
+    # CPU-превью клиента (не требует GPU): PNG-подобные PPM-кадры для визуальной проверки
+    add_executable(razlom_preview tools/preview.cpp src/client/font.cpp src/client/hud.cpp)
+    target_link_libraries(razlom_preview PRIVATE razlom_core)
+    target_include_directories(razlom_preview PRIVATE ${RAZLOM_INCLUDES})
+
     add_executable(razlom_bench tests/bench.cpp)
     target_link_libraries(razlom_bench PRIVATE razlom_core)
 endif()

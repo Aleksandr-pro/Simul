@@ -57,10 +57,17 @@ bool App::init() {
         std::printf("[разлом] рендерер не инициализирован: %s\n", renderer_.lastError().c_str());
         return false;
     }
-    renderer_.initFontTexture(font_.pixels(), FontAtlas::kSize);
-    if (!hud_.init(&font_)) return false;
+    fontTextureOk_ = renderer_.initFontTexture(font_.pixels(), FontAtlas::kSize);
+    if (!fontTextureOk_) {
+        std::printf("[разлом] атлас шрифта не загрузился: %s\n", renderer_.lastError().c_str());
+    }
+    hud_.setTextEnabled(fontTextureOk_);
+    hud_.init(&font_);
 
     hotbar_ = {kStone, kBrick, kPlanks, kLog, kSand, kGlass, kStoneBrick, kDirt, kTnt};
+#ifdef __ANDROID__
+    touchMode_ = true;  // на телефоне мыши нет — сразу тач-раскладка
+#endif
     screen_ = Screen::Menu;
     screenWidth_ = sapp_width();
     screenHeight_ = sapp_height();
@@ -176,6 +183,9 @@ void App::beginWorld(uint32_t seed, GameMode mode, const std::vector<BlockChange
 
     local_ = LocalPlayer{};
     local_.pos = spawnPosition(world_);
+    // смотрим в сторону башни и моста — первое, что видит игрок
+    local_.yaw = -0.98f;
+    local_.pitch = -0.06f;
     local_.flying = (mode == GameMode::Sandbox);
     local_.health = 100;
     local_.dead = false;
@@ -190,6 +200,9 @@ void App::beginWorld(uint32_t seed, GameMode mode, const std::vector<BlockChange
     }
 
     addLog(std::string("Мир загружен: ") + gameModeName(mode));
+    loadingTimer_ = 0.0f;
+    loadingProgress_ = 0.0f;
+    loadingTotal_ = 1;
     screen_ = Screen::Loading;
     status_ = "Строим чанки…";
 }
@@ -418,6 +431,7 @@ void App::updatePlaying(float dt) {
     }
 
     if (toastTimer_ > 0.0f) toastTimer_ -= dt;
+    if (tipsTimer_ > 0.0f) tipsTimer_ -= dt;
 }
 
 void App::frame() {
@@ -431,18 +445,24 @@ void App::frame() {
         fpsFrames_ = 0;
     }
 
-    screenWidth_ = sapp_width();
-    screenHeight_ = sapp_height();
+    const int fbWidth = sapp_width();
+    const int fbHeight = sapp_height();
+    if (fbWidth > 0 && fbHeight > 0) {
+        screenWidth_ = fbWidth;
+        screenHeight_ = fbHeight;
+    }
     renderer_.setScreenSize(screenWidth_, screenHeight_);
 
     handleNetwork(dt);
 
     if (screen_ == Screen::Loading && client_.connected() && worldReady_) {
-        renderer_.buildChunks(world_, 64);
+        loadingTimer_ += dt;
+        renderer_.buildChunks(world_, 96);
         const int pending = renderer_.pendingChunks(world_);
         loadingTotal_ = std::max(loadingTotal_, pending + 1);
         loadingProgress_ = 1.0f - static_cast<float>(pending) / static_cast<float>(loadingTotal_);
-        if (pending == 0) {
+        // предохранитель: даже если чанки почему-то не достроились, входим в мир
+        if (pending == 0 || loadingTimer_ > 4.0f) {
             screen_ = Screen::Playing;
             loadingProgress_ = 1.0f;
             if (!touchMode_ && !mouseLocked_) {
@@ -450,6 +470,10 @@ void App::frame() {
                 mouseLocked_ = true;
             }
             addToast(hosting_ ? "Мир готов — зовите друзей по ссылке" : "Вы в мире");
+            if (!firstWorldTipsShown_) {
+                firstWorldTipsShown_ = true;
+                tipsTimer_ = 18.0f;
+            }
         }
     }
 
@@ -516,6 +540,14 @@ void App::buildHudModel(HudModel& model, const HudInput& input) {
     model.toast = toast_;
     model.toastTimer = toastTimer_;
     model.showTouch = touchMode_;
+    model.stats = renderer_.statsLine();
+    model.tipsTimer = tipsTimer_;
+    model.tips = touchMode_ ? std::vector<std::string>{"Сломай опору башни — она упадёт",
+                                                       "Стик — идти, свайп справа — смотреть",
+                                                       "ЛОМ и СТАВ — блоки, ТНТ — взрыв"}
+                            : std::vector<std::string>{"Сломай опору башни — она упадёт",
+                                                       "ЛКМ — ломать, ПКМ — ставить, E — взрыв",
+                                                       "Esc — пауза и ссылка для друзей"};
 
     model.players.clear();
     for (const net::PlayerSnapshot& p : players_) {
@@ -604,6 +636,15 @@ void App::handleHudAction(const HudResult& result) {
             break;
         case HudAction::Attack:
             client_.sendAttack();
+            break;
+        case HudAction::Pause:
+            screen_ = Screen::Paused;
+            if (mouseLocked_) {
+                sapp_lock_mouse(false);
+                mouseLocked_ = false;
+            }
+            breakHeld_ = false;
+            placeHeld_ = false;
             break;
         case HudAction::ToggleFly:
             if (mode_ == GameMode::Sandbox) local_.flying = !local_.flying;

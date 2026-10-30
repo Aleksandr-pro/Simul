@@ -18,8 +18,11 @@ struct Glyph {
 class FontAtlas {
 public:
     static constexpr int kSize = 512;
-    static constexpr float kWhiteU = 2.0f / static_cast<float>(kSize);
-    static constexpr float kWhiteV = 2.0f / static_cast<float>(kSize);
+    // Центр углового текселя: ровно попадает в белую заливку 2x2.
+    // Раньше здесь стояло 2.0/kSize — это граница текселя, и с линейной
+    // фильтрацией все панели получались полупрозрачными.
+    static constexpr float kWhiteU = 0.5f / static_cast<float>(kSize);
+    static constexpr float kWhiteV = 0.5f / static_cast<float>(kSize);
 
     bool build(float pixelHeight = 30.0f);
     bool ready() const { return ready_; }

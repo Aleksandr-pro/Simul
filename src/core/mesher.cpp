@@ -23,8 +23,10 @@ constexpr int kCorners[6][4][3] = {
 // Яркость грани (запечённый «солнечный» свет).
 constexpr uint8_t kFaceShade[6] = {212, 226, 255, 138, 236, 198};
 
-// Множители AO по количеству перекрытых углов.
-constexpr uint8_t kAoShade[4] = {148, 190, 222, 255};
+// Множители AO по количеству перекрытых углов: 0 перекрытий — без затемнения,
+// 3 (замкнутый угол) — самое тёмное. Раньше таблица была перевёрнута, и открытая
+// земля выглядела темнее, чем углы построек.
+constexpr uint8_t kAoShade[4] = {255, 222, 190, 148};
 
 inline uint8_t solidOpaque(const World& w, int x, int y, int z) {
     return isOpaqueBlock(w.getForPhysics(x, y, z)) ? 1 : 0;

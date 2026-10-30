@@ -6,6 +6,7 @@
 #include <string>
 
 #include "razlom/core/blocks.hpp"
+#include "sokol_app.h"
 #include "sokol_glue.h"
 
 namespace razlom::client {
@@ -15,10 +16,6 @@ struct WorldParams {
     float mvp[16];
     float fog[4];
     float wave[4];
-};
-
-struct UiParams {
-    float screen[4];
 };
 
 constexpr uint8_t kFaceShade3D[6] = {205, 190, 255, 130, 225, 175};
@@ -119,18 +116,16 @@ void main() {
 }
 )";
 
+// Позиции интерфейса приходят уже в NDC (пересчёт на CPU): у шейдера нет
+// ни uniform-блока, ни делений — меньше мест, где что-то может отвалиться.
 const char* kUiVsBody = R"(
-layout(std140) uniform ui_params {
-    vec4 screen;
-};
 in vec2 position;
 in vec2 uv;
 in vec4 color;
 out vec2 v_uv;
 out vec4 v_color;
 void main() {
-    vec2 ndc = vec2(position.x / screen.x * 2.0 - 1.0, 1.0 - position.y / screen.y * 2.0);
-    gl_Position = vec4(ndc, 0.0, 1.0);
+    gl_Position = vec4(position, 0.0, 1.0);
     v_uv = uv;
     v_color = color;
 }
@@ -247,9 +242,6 @@ float4 main(fs_in inp) : SV_Target {
 )";
 
 const char* kUiVsHlsl = R"(
-cbuffer ui_params : register(b0) {
-    float4 screen;
-};
 struct vs_in {
     float2 position : POSITION;
     float2 uv : TEXCOORD0;
@@ -262,8 +254,7 @@ struct vs_out {
 };
 vs_out main(vs_in inp) {
     vs_out o;
-    float2 ndc = float2(inp.position.x / screen.x * 2.0 - 1.0, 1.0 - inp.position.y / screen.y * 2.0);
-    o.pos = float4(ndc, 0.0, 1.0);
+    o.pos = float4(inp.position, 0.0, 1.0);
     o.uv = inp.uv;
     o.color = inp.color;
     return o;
@@ -360,12 +351,63 @@ bool Renderer::init() {
         skyCapacity_ = sizeof(sky);
     }
 
-    // заглушка текстуры шрифта (заменится настоящим атласом)
+    // Буферы интерфейса и динамической геометрии создаются один раз:
+    // пересоздание ресурсов в кадре — лишний риск на мобильных драйверах.
     {
-        std::vector<uint8_t> white(static_cast<size_t>(kFontAtlasSize) * kFontAtlasSize * 4, 255);
-        initFontTexture(white.data(), kFontAtlasSize);
+        sg_buffer_desc desc{};
+        desc.usage.vertex_buffer = true;
+        desc.usage.write_transient = true;
+        desc.size = kMaxUiVertices * sizeof(UiVertex);
+        desc.label = "razlom-ui";
+        uiBuffer_ = sg_make_buffer(desc);
+        uiCapacity_ = desc.size;
+
+        sg_buffer_desc ddesc{};
+        ddesc.usage.vertex_buffer = true;
+        ddesc.usage.write_transient = true;
+        ddesc.size = kMaxDynamicVertices * sizeof(Vertex3D);
+        ddesc.label = "razlom-dynamic";
+        dynamicBuffer_ = sg_make_buffer(ddesc);
+        dynamicCapacity_ = ddesc.size;
+    }
+
+    ensureWhiteTexture();
+    switch (sg_query_backend()) {
+        case SG_BACKEND_GLCORE: backendName_ = "OpenGL"; break;
+        case SG_BACKEND_GLES3: backendName_ = "GLES3"; break;
+        case SG_BACKEND_D3D11: backendName_ = "D3D11"; break;
+        case SG_BACKEND_METAL_IOS:
+        case SG_BACKEND_METAL_MACOS:
+        case SG_BACKEND_METAL_SIMULATOR: backendName_ = "Metal"; break;
+        default: backendName_ = "GPU"; break;
     }
     return true;
+}
+
+bool Renderer::ensureWhiteTexture() {
+    if (whiteView_.id != 0) return true;
+    const uint8_t white[4] = {255, 255, 255, 255};
+    sg_image_desc desc{};
+    desc.width = 1;
+    desc.height = 1;
+    desc.pixel_format = SG_PIXELFORMAT_RGBA8;
+    desc.num_mipmaps = 1;
+    desc.data = sg_range{white, sizeof(white)};
+    desc.label = "razlom-1x1-white";
+    whiteImage_ = sg_make_image(desc);
+    if (whiteImage_.id == 0) return false;
+    sg_view_desc vd{};
+    vd.texture.image = whiteImage_;
+    vd.label = "razlom-1x1-white-view";
+    whiteView_ = sg_make_view(vd);
+    return whiteView_.id != 0;
+}
+
+std::string Renderer::statsLine() const {
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "%s · %dx%d · %d выз. · %d чанков", backendName_, width_, height_, drawCalls_,
+                  visibleChunks_);
+    return std::string(buf);
 }
 
 std::string Renderer::glslHeader() const {
@@ -429,15 +471,6 @@ bool Renderer::initShaders() {
             ub.glsl_uniforms[2].type = SG_UNIFORMTYPE_FLOAT4;
             ub.glsl_uniforms[2].array_count = 0;
             ub.glsl_uniforms[2].glsl_name = "wave";
-        } else if (uiUniforms) {
-            sg_shader_uniform_block& ub = desc.uniform_blocks[0];
-            ub.stage = SG_SHADERSTAGE_VERTEX;
-            ub.size = sizeof(UiParams);
-            ub.layout = SG_UNIFORMLAYOUT_STD140;
-            ub.hlsl_register_b_n = 0;
-            ub.glsl_uniforms[0].type = SG_UNIFORMTYPE_FLOAT4;
-            ub.glsl_uniforms[0].array_count = 0;
-            ub.glsl_uniforms[0].glsl_name = "screen";
         }
 
         if (textured) {
@@ -495,12 +528,12 @@ bool Renderer::initPipelines() {
     desc.primitive_type = SG_PRIMITIVETYPE_TRIANGLES;
     desc.cull_mode = SG_CULLMODE_BACK;
     desc.face_winding = SG_FACEWINDING_CCW;
-    desc.depth.pixel_format = SG_PIXELFORMAT_DEPTH;
+    desc.depth.pixel_format = static_cast<sg_pixel_format>(sapp_depth_format());
     desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
     desc.depth.write_enabled = true;
-    desc.colors[0].pixel_format = SG_PIXELFORMAT_RGBA8;
+    desc.colors[0].pixel_format = static_cast<sg_pixel_format>(sapp_color_format());
     desc.color_count = 1;
-    desc.sample_count = 1;
+    desc.sample_count = sapp_sample_count();
     worldPipeline_ = sg_make_pipeline(desc);
 
     desc.shader = waterShader_;
@@ -523,13 +556,13 @@ bool Renderer::initPipelines() {
     desc.layout.attrs[2].format = SG_VERTEXFORMAT_UBYTE4N;
     desc.primitive_type = SG_PRIMITIVETYPE_TRIANGLES;
     desc.cull_mode = SG_CULLMODE_NONE;
-    desc.depth.pixel_format = SG_PIXELFORMAT_DEPTH;
+    desc.depth.pixel_format = static_cast<sg_pixel_format>(sapp_depth_format());
     desc.depth.compare = SG_COMPAREFUNC_ALWAYS;
     desc.depth.write_enabled = false;
-    desc.colors[0].pixel_format = SG_PIXELFORMAT_RGBA8;
+    desc.colors[0].pixel_format = static_cast<sg_pixel_format>(sapp_color_format());
     desc.colors[0].blend = alphaBlend();
     desc.color_count = 1;
-    desc.sample_count = 1;
+    desc.sample_count = sapp_sample_count();
     uiPipeline_ = sg_make_pipeline(desc);
 
     desc = sg_pipeline_desc{};
@@ -543,12 +576,12 @@ bool Renderer::initPipelines() {
     desc.layout.attrs[1].format = SG_VERTEXFORMAT_UBYTE4N;
     desc.primitive_type = SG_PRIMITIVETYPE_TRIANGLES;
     desc.cull_mode = SG_CULLMODE_NONE;
-    desc.depth.pixel_format = SG_PIXELFORMAT_DEPTH;
+    desc.depth.pixel_format = static_cast<sg_pixel_format>(sapp_depth_format());
     desc.depth.compare = SG_COMPAREFUNC_ALWAYS;
     desc.depth.write_enabled = false;
-    desc.colors[0].pixel_format = SG_PIXELFORMAT_RGBA8;
+    desc.colors[0].pixel_format = static_cast<sg_pixel_format>(sapp_color_format());
     desc.color_count = 1;
-    desc.sample_count = 1;
+    desc.sample_count = sapp_sample_count();
     skyPipeline_ = sg_make_pipeline(desc);
 
     if (sg_query_pipeline_state(worldPipeline_) != SG_RESOURCESTATE_VALID ||
@@ -560,8 +593,15 @@ bool Renderer::initPipelines() {
 }
 
 bool Renderer::initFontTexture(const uint8_t* rgba, int size) {
+    if (!rgba || size <= 0) return false;
     if (fontView_.id != 0) sg_destroy_view(fontView_);
     if (fontImage_.id != 0) sg_destroy_image(fontImage_);
+    if (whiteView_.id != 0) sg_destroy_view(whiteView_);
+    if (whiteImage_.id != 0) sg_destroy_image(whiteImage_);
+    fontView_ = {};
+    fontImage_ = {};
+    fontOk_ = false;
+
     if (fontSampler_.id == 0) {
         sg_sampler_desc sd{};
         sd.min_filter = SG_FILTER_LINEAR;
@@ -579,15 +619,21 @@ bool Renderer::initFontTexture(const uint8_t* rgba, int size) {
     desc.height = size;
     desc.pixel_format = SG_PIXELFORMAT_RGBA8;
     desc.num_mipmaps = 1;
-    desc.data = sg_range{rgba, static_cast<size_t>(size) * size * 4};
+    desc.data = sg_range{rgba, static_cast<size_t>(size) * static_cast<size_t>(size) * 4};
     desc.label = "razlom-font";
     fontImage_ = sg_make_image(desc);
+    if (fontImage_.id == 0) {
+        setError("Не удалось загрузить атлас шрифта");
+        return false;
+    }
 
     sg_view_desc vd{};
     vd.texture.image = fontImage_;
     vd.label = "razlom-font-view";
     fontView_ = sg_make_view(vd);
-    return true;
+    fontOk_ = fontView_.id != 0 && fontSampler_.id != 0;
+    if (!fontOk_) setError("Не удалось создать представление атласа шрифта");
+    return fontOk_;
 }
 
 void Renderer::shutdown() {
@@ -604,6 +650,8 @@ void Renderer::shutdown() {
     if (dynamicBuffer_.id != 0) sg_destroy_buffer(dynamicBuffer_);
     if (fontView_.id != 0) sg_destroy_view(fontView_);
     if (fontImage_.id != 0) sg_destroy_image(fontImage_);
+    if (whiteView_.id != 0) sg_destroy_view(whiteView_);
+    if (whiteImage_.id != 0) sg_destroy_image(whiteImage_);
     if (fontSampler_.id != 0) sg_destroy_sampler(fontSampler_);
     if (worldPipeline_.id != 0) sg_destroy_pipeline(worldPipeline_);
     if (waterPipeline_.id != 0) sg_destroy_pipeline(waterPipeline_);
@@ -619,6 +667,8 @@ void Renderer::shutdown() {
     fontImage_ = {};
     fontView_ = {};
     fontSampler_ = {};
+    whiteImage_ = {};
+    whiteView_ = {};
     worldPipeline_ = {};
     waterPipeline_ = {};
     uiPipeline_ = {};
@@ -693,6 +743,7 @@ int Renderer::pendingChunks(const World& world) const { return static_cast<int>(
 void Renderer::buildDynamicGeometry(const FrameData& frame) {
     dynamicVertices_.clear();
     dynamicOpaqueVertices_ = 0;
+    dynamicVertices_.reserve(4096);
 
     if (frame.debris) {
         for (const net::DebrisSnapshot& d : *frame.debris) {
@@ -729,6 +780,12 @@ void Renderer::buildDynamicGeometry(const FrameData& frame) {
                        static_cast<float>(frame.highlight.z + 1) + 0.01f};
         pushCube(dynamicVertices_, min, max, 255, 255, 255, 70, 1.02f);
     }
+
+    // не выходим за фиксированную ёмкость буфера
+    if (dynamicVertices_.size() > kMaxDynamicVertices) dynamicVertices_.resize(kMaxDynamicVertices);
+    if (dynamicOpaqueVertices_ > static_cast<int>(dynamicVertices_.size())) {
+        dynamicOpaqueVertices_ = static_cast<int>(dynamicVertices_.size());
+    }
 }
 
 Mat4 Renderer::viewProjection(const FrameData& frame) const {
@@ -747,46 +804,9 @@ void Renderer::render(const FrameData& frame) {
     if (frame.world) remeshedThisFrame_ = buildChunks(*frame.world, frame.maxRemesh);
     buildDynamicGeometry(frame);
 
-    // --- запись динамических вершин ---
-    if (!dynamicVertices_.empty()) {
-        const size_t bytes = dynamicVertices_.size() * sizeof(Vertex3D);
-        if (dynamicBuffer_.id == 0 || dynamicCapacity_ < bytes) {
-            if (dynamicBuffer_.id != 0) sg_destroy_buffer(dynamicBuffer_);
-            sg_buffer_desc desc{};
-            desc.usage.vertex_buffer = true;
-            desc.usage.write_transient = true;
-            desc.size = bytes;
-            desc.label = "razlom-dynamic";
-            dynamicBuffer_ = sg_make_buffer(desc);
-            dynamicCapacity_ = bytes;
-        }
-        sg_write_buffer_desc wd{};
-        wd.src.data = sg_range{dynamicVertices_.data(), bytes};
-        wd.dst.buffer = dynamicBuffer_;
-        wd.dst.offset = 0;
-        sg_write_buffer_transient(wd);
-    }
-
     const std::vector<UiVertex> emptyUi;
     const std::vector<UiVertex>& ui = frame.ui ? *frame.ui : emptyUi;
-    if (!ui.empty()) {
-        const size_t bytes = ui.size() * sizeof(UiVertex);
-        if (uiBuffer_.id == 0 || uiCapacity_ < bytes) {
-            if (uiBuffer_.id != 0) sg_destroy_buffer(uiBuffer_);
-            sg_buffer_desc desc{};
-            desc.usage.vertex_buffer = true;
-            desc.usage.write_transient = true;
-            desc.size = bytes;
-            desc.label = "razlom-ui";
-            uiBuffer_ = sg_make_buffer(desc);
-            uiCapacity_ = bytes;
-        }
-        sg_write_buffer_desc wd{};
-        wd.src.data = sg_range{ui.data(), bytes};
-        wd.dst.buffer = uiBuffer_;
-        wd.dst.offset = 0;
-        sg_write_buffer_transient(wd);
-    }
+    const size_t dynamicBytes = std::min(dynamicVertices_.size(), kMaxDynamicVertices) * sizeof(Vertex3D);
 
     sg_pass pass{};
     pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
@@ -851,7 +871,13 @@ void Renderer::render(const FrameData& frame) {
     }
 
     // --- 4. обломки и игроки ---
-    if (dynamicOpaqueVertices_ > 0 && dynamicBuffer_.id != 0) {
+    if (dynamicOpaqueVertices_ > 0 && dynamicBuffer_.id != 0 && dynamicBytes > 0) {
+        // transient-буфер по документации sokol пишется внутри пасса, до привязки
+        sg_write_buffer_desc wd{};
+        wd.src.data = sg_range{dynamicVertices_.data(), dynamicBytes};
+        wd.dst.buffer = dynamicBuffer_;
+        wd.dst.offset = 0;
+        sg_write_buffer_transient(&wd);
         WorldParams params{};
         for (int i = 0; i < 16; ++i) params.mvp[i] = vp.m[i];
         params.fog[0] = 0.52f;
@@ -883,18 +909,32 @@ void Renderer::render(const FrameData& frame) {
     }
 
     // --- 6. интерфейс ---
-    if (!ui.empty() && uiBuffer_.id != 0 && fontView_.id != 0) {
-        UiParams params{};
-        params.screen[0] = static_cast<float>(width_);
-        params.screen[1] = static_cast<float>(height_);
+    if (!ui.empty() && uiBuffer_.id != 0 && uiView().id != 0) {
+        // пиксели -> NDC на CPU, не больше ёмкости буфера
+        const size_t uiCount = std::min(ui.size(), kMaxUiVertices);
+        uiNdc_.resize(uiCount);
+        const float sx = 2.0f / static_cast<float>(width_ > 0 ? width_ : 1);
+        const float sy = 2.0f / static_cast<float>(height_ > 0 ? height_ : 1);
+        for (size_t i = 0; i < uiCount; ++i) {
+            UiVertex v = ui[i];
+            v.x = v.x * sx - 1.0f;
+            v.y = 1.0f - v.y * sy;
+            uiNdc_[i] = v;
+        }
+
+        sg_write_buffer_desc wd{};
+        wd.src.data = sg_range{uiNdc_.data(), uiNdc_.size() * sizeof(UiVertex)};
+        wd.dst.buffer = uiBuffer_;
+        wd.dst.offset = 0;
+        sg_write_buffer_transient(&wd);
+
         sg_apply_pipeline(uiPipeline_);
-        sg_apply_uniforms(0, sg_range{&params, sizeof(params)});
         sg_bindings bind{};
         bind.vertex_buffers[0] = uiBuffer_;
-        bind.views[0] = fontView_;
+        bind.views[0] = uiView();
         bind.samplers[0] = fontSampler_;
         sg_apply_bindings(&bind);
-        sg_draw(0, static_cast<int>(ui.size()), 1);
+        sg_draw(0, static_cast<int>(uiNdc_.size()), 1);
         ++drawCalls_;
     }
 

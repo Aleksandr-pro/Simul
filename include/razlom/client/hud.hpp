@@ -37,6 +37,7 @@ enum class HudAction {
     Attack,
     ToggleFly,
     SelectSlot,
+    Pause,
 };
 
 struct HudInput {
@@ -78,6 +79,10 @@ struct HudModel {
     std::string error;
     std::string status;
     float loadingProgress = 0.0f;
+    std::string stats;  // диагностическая строка (бэкенд, размер, вызовы отрисовки)
+    // подсказки первого запуска: показываются в начале мира
+    std::vector<std::string> tips;
+    float tipsTimer = 0.0f;
 
     std::string modeName;
     std::string modeTagline;
@@ -114,6 +119,8 @@ struct TouchLayout {
 class Hud {
 public:
     bool init(const FontAtlas* font);
+    // Если текстура атласа не создалась, тексты отключаются — панели остаются видны.
+    void setTextEnabled(bool enabled) { textEnabled_ = enabled; }
     void draw(const HudModel& model, const HudInput& input, HudResult& result);
 
     const std::vector<UiVertex>& vertices() const { return verts_; }
@@ -142,6 +149,7 @@ private:
     const FontAtlas* font_ = nullptr;
     std::vector<UiVertex> verts_;
     float scale_ = 1.0f;
+    bool textEnabled_ = true;
     int width_ = 1280;
     int height_ = 720;
     int hoveredButton_ = -1;

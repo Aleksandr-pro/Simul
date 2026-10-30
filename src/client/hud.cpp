@@ -53,7 +53,7 @@ void Hud::rectOutline(float x, float y, float w, float h, uint8_t r, uint8_t g, 
 }
 
 void Hud::text(float x, float y, const std::string& utf8, uint8_t r, uint8_t g, uint8_t b, uint8_t a, float scale) {
-    if (!font_) return;
+    if (!font_ || !textEnabled_) return;
     float penX = x;
     float penY = y;
     const float lineHeight = font_->lineHeight() * scale;
@@ -128,14 +128,23 @@ const TouchLayout& Hud::layout(int width, int height) {
     const float s = scale_;
     const float w = static_cast<float>(width);
     const float h = static_cast<float>(height);
-    const float btn = 92.0f * s;
+    const float btn = 84.0f * s;
+    const float actionGap = 12.0f * s;
+    const float right = w - 24.0f * s;
+    const float bottom = h - 20.0f * s;
 
-    touch_.stick = Rect{28.0f * s, h - 28.0f * s - 190.0f * s, 190.0f * s, 190.0f * s};
-    touch_.jump = Rect{w - btn - 22.0f * s, h - btn - 26.0f * s, btn, btn};
-    touch_.breakBlock = Rect{w - btn * 2.0f - 34.0f * s, h - btn - 78.0f * s, btn, btn};
-    touch_.placeBlock = Rect{w - btn * 2.0f - 34.0f * s, h - btn * 2.0f - 130.0f * s, btn, btn};
-    touch_.explode = Rect{w - btn * 3.0f - 46.0f * s, h - btn - 26.0f * s, btn, btn};
-    touch_.fly = Rect{w - btn * 3.0f - 46.0f * s, h - btn * 2.0f - 78.0f * s, btn, btn};
+    // Стик слева, кластер действий справа: ровная сетка 2x3 без наложений.
+    touch_.stick = Rect{24.0f * s, h - 24.0f * s - 190.0f * s, 190.0f * s, 190.0f * s};
+    const float col0 = right - btn;
+    const float col1 = col0 - actionGap - btn;
+    const float row0 = bottom - btn;
+    const float row1 = row0 - actionGap - btn;
+    const float row2 = row1 - actionGap - btn;
+    touch_.jump = Rect{col0, row0, btn, btn};
+    touch_.breakBlock = Rect{col1, row0, btn, btn};
+    touch_.placeBlock = Rect{col0, row1, btn, btn};
+    touch_.explode = Rect{col1, row1, btn, btn};
+    touch_.fly = Rect{col0, row2, btn, btn};
 
     const float slotSize = 52.0f * s;
     const float gap = 6.0f * s;
@@ -199,13 +208,16 @@ void Hud::drawMenu(const HudModel& model, const HudInput& input, HudResult& resu
     textCentered(w * 0.5f, by, "Мир создаётся одной кнопкой — друзья заходят по ссылке", kMutedR, kMutedG, kMutedB, 220,
                  0.66f * scale_);
     textCentered(w * 0.5f, by + 26.0f * scale_,
-                 "WASD — идти • мышь — смотреть • ЛКМ — ломать • ПКМ — ставить • ТНТ — взрыв", kMutedR, kMutedG,
-                 kMutedB, 170, 0.6f * scale_);
+                 model.showTouch ? std::string("стик — идти • свайп справа — смотреть • ЛОМ / СТАВ / ТНТ — действия")
+                                 : std::string("WASD — идти • мышь — смотреть • ЛКМ — ломать • ПКМ — ставить • E — взрыв"),
+                 kMutedR, kMutedG, kMutedB, 170, 0.6f * scale_);
 
     if (!model.error.empty()) {
         textCentered(w * 0.5f, h - 70.0f * scale_, model.error, kDangerR, kDangerG, kDangerB, 255, 0.7f * scale_);
     }
-    textCentered(w * 0.5f, h - 34.0f * scale_, "прототип v0.1 • нативный C++20 + sokol", kMutedR, kMutedG, kMutedB, 140,
+    textCentered(w * 0.5f, h - 34.0f * scale_,
+                 model.stats.empty() ? std::string("прототип v0.2 • нативный C++20 + sokol") : model.stats, kMutedR,
+                 kMutedG, kMutedB, 150,
                  0.58f * scale_);
 }
 
@@ -271,7 +283,7 @@ void Hud::drawCatalog(const HudModel& model, const HudInput& input, HudResult& r
     const Card cards[3] = {
         {"Песочница", "креатив, полёт, всё ломается и падает", "играть", true, HudAction::ModeSandbox},
         {"Последний выживший", "PvP, здоровье, респавн, победитель один", "играть", true, HudAction::ModeLastStanding},
-        {"Защита базы", "волны, ядро, магазин — редактор режимов", "скоро", false, HudAction::None},
+        {"Защита базы", "выживание без PvP: строй укрытие и держи его", "бета", true, HudAction::ModeBaseDefense},
     };
 
     const float cardW = std::min(360.0f * scale_, (w - 120.0f * scale_) / 3.0f - 20.0f * scale_);
@@ -357,8 +369,8 @@ void Hud::drawPlaying(const HudModel& model, const HudInput& input, HudResult& r
     if (!model.roomLink.empty()) {
         const std::string link = "Друзьям: " + model.roomLink;
         const float linkW = measure(link, 0.56f * s) + 28.0f * s;
-        rect(14.0f * s, 120.0f * s, linkW, 34.0f * s, 18, 22, 34, 190);
-        text(28.0f * s, 127.0f * s, link, kAccent2R, kAccent2G, kAccent2B, 235, 0.56f * s);
+        rect(14.0f * s, 124.0f * s, linkW, 34.0f * s, 18, 22, 34, 190);
+        text(28.0f * s, 131.0f * s, link, kAccent2R, kAccent2G, kAccent2B, 235, 0.56f * s);
     }
 
     // --- игроки ---
@@ -387,7 +399,7 @@ void Hud::drawPlaying(const HudModel& model, const HudInput& input, HudResult& r
     }
 
     // --- журнал ---
-    float logY = h - 220.0f * s;
+    float logY = h - (model.showTouch ? 320.0f : 220.0f) * s;
     for (const std::string& line : model.log) {
         rect(14.0f * s, logY - 3.0f * s, measure(line, 0.6f * s) + 18.0f * s, 27.0f * s, 10, 12, 18, 150);
         text(22.0f * s, logY, line, 225, 232, 244, 230, 0.6f * s);
@@ -420,6 +432,27 @@ void Hud::drawPlaying(const HudModel& model, const HudInput& input, HudResult& r
 
     // --- тач-кнопки ---
     if (model.showTouch) drawTouchControls(model, input);
+
+    // --- пауза (доступна и на телефоне) ---
+    const float pauseSize = 46.0f * s;
+    const Rect pauseRect{w * 0.5f - pauseSize * 0.5f, 12.0f * s, pauseSize, pauseSize};
+    rect(pauseRect.x, pauseRect.y, pauseRect.w, pauseRect.h, 16, 20, 30, 190);
+    rectOutline(pauseRect.x, pauseRect.y, pauseRect.w, pauseRect.h, 200, 210, 230, 150, 1.5f);
+    rect(pauseRect.cx() - 8.0f * s, pauseRect.cy() - 9.0f * s, 5.0f * s, 18.0f * s, 230, 236, 245, 235);
+    rect(pauseRect.cx() + 3.0f * s, pauseRect.cy() - 9.0f * s, 5.0f * s, 18.0f * s, 230, 236, 245, 235);
+    if (pauseRect.contains(input.mouseX, input.mouseY) && input.pressed) result.action = HudAction::Pause;
+
+    // --- подсказки первого запуска ---
+    if (model.tipsTimer > 0.0f && !model.tips.empty()) {
+        const float alpha = clampf(model.tipsTimer * 120.0f, 0.0f, 220.0f);
+        float tipY = 196.0f * s;  // ниже всплывающего уведомления
+        for (const std::string& tip : model.tips) {
+            const float tw = measure(tip, 0.62f * s) + 32.0f * s;
+            rect((w - tw) * 0.5f, tipY, tw, 34.0f * s, 14, 18, 28, static_cast<uint8_t>(alpha));
+            textCentered(w * 0.5f, tipY + 7.0f * s, tip, 236, 241, 249, static_cast<uint8_t>(alpha + 30), 0.62f * s);
+            tipY += 40.0f * s;
+        }
+    }
 
     // --- вы мертвы ---
     if (model.dead) {

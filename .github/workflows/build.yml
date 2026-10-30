@@ -29,6 +29,21 @@ jobs:
       - name: Автотесты (генерация, физика разрушения, вода, сеть)
         run: ./build/razlom_tests
 
+      - name: Автотесты интерфейса (шрифт, раскладка, кнопки)
+        run: ./build/razlom_ui_tests
+
+      - name: CPU-превью кадров (без GPU)
+        run: |
+          mkdir -p preview
+          ./build/razlom_preview preview
+          ls -la preview
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: razlom-preview
+          path: preview/*.ppm
+          if-no-files-found: warn
+
       - name: Бенчмарк (бюджет кадра на мобильных)
         run: ./build/razlom_bench
 

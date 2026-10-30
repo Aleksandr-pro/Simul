@@ -93,10 +93,12 @@ inline void blockFaceColor(uint8_t id, int x, int y, int z, uint8_t faceShade,
     r = clampByte(r + jitter);
     g = clampByte(g + jitter);
     b = clampByte(b + jitter);
+    // Два множителя 0..255 (яркость грани и AO) — нормируем один раз на каждый.
     const int shadeNum = static_cast<int>(faceShade) * static_cast<int>(ao);
-    out[0] = clampByte(r * shadeNum / 255);
-    out[1] = clampByte(g * shadeNum / 255);
-    out[2] = clampByte(b * shadeNum / 255);
+    const int base = r * shadeNum / (255 * 255);
+    out[0] = clampByte(base);
+    out[1] = clampByte(g * shadeNum / (255 * 255));
+    out[2] = clampByte(b * shadeNum / (255 * 255));
     out[3] = 255;
 }
 

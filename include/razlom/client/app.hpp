@@ -132,6 +132,10 @@ private:
     bool joinRequested_ = false;
     float loadingProgress_ = 0.0f;
     int loadingTotal_ = 1;
+    float loadingTimer_ = 0.0f;
+    float tipsTimer_ = 0.0f;
+    bool firstWorldTipsShown_ = false;
+    bool fontTextureOk_ = false;
 
     uint64_t lastFrameTime_ = 0;
     float time_ = 0.0f;

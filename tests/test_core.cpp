@@ -122,6 +122,50 @@ TEST(mesher_single_block_and_winding) {
     CHECK(mesh.water.size() > 0);
 }
 
+// Цвет грани: два множителя (яркость грани и AO) нормируются оба — иначе
+// всё поле вершин уезжает в 255 и мир рисуется белым.
+TEST(block_face_color_is_shaded) {
+    uint8_t full[4];
+    blockFaceColor(kStone, 3, 4, 5, 255, 255, full);
+    CHECK(std::abs(static_cast<int>(full[0]) - static_cast<int>(blockDef(kStone).r)) <= 3);
+    CHECK(full[3] == 255);
+
+    uint8_t dark[4];
+    blockFaceColor(kStone, 3, 4, 5, 128, 255, dark);
+    const int base = blockDef(kStone).r;
+    CHECK(dark[0] < base);
+    CHECK(dark[0] > base / 4);
+
+    uint8_t ao[4];
+    blockFaceColor(kStone, 3, 4, 5, 255, 148, ao);
+    CHECK(ao[0] < base);
+
+    // ни один блок не должен стать чисто белым от одного затенения
+    for (int id = 1; id < kBlockCount; ++id) {
+        uint8_t c[4];
+        blockFaceColor(static_cast<uint8_t>(id), 10, 20, 30, 255, 148, c);
+        const BlockDef& def = blockDef(static_cast<uint8_t>(id));
+        CHECK(!(c[0] == 255 && c[1] == 255 && c[2] == 255 && def.r < 200));
+    }
+}
+
+// Вершины меша должны нести настоящий цвет блока, а не белый.
+TEST(mesher_vertices_keep_block_color) {
+    World w(7u);
+    generateWorld(w, 7u);
+    ChunkMesh mesh;
+    int checked = 0;
+    for (int chunk = 0; chunk < World::kChunkCount && checked < 40; ++chunk) {
+        buildChunkMesh(w, chunk, mesh);
+        for (const MeshVertex& v : mesh.opaque) {
+            CHECK(!(v.r == 255 && v.g == 255 && v.b == 255));
+            CHECK(v.a == 255);
+            if (++checked >= 40) break;
+        }
+    }
+    CHECK(checked >= 40);
+}
+
 TEST(structure_stable_pillar) {
     World w(3);
     w.fill(kAir);
