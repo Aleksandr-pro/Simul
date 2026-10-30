@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   tests:
-    name: C++20 ядро: тесты и бенчмарк (Linux x64)
+    name: "C++20 ядро: тесты и бенчмарк (Linux x64)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
