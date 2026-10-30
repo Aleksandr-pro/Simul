@@ -57,7 +57,7 @@ cmake -B build -A x64 -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel
 build\Release\Razlom.exe
 ```
-Готовый `.exe` также собирается в CI (Direct3D 11, статический CRT).
+Готовый `.exe` также собирается в CI (Direct3D 11, статический CRT) — забирайте артефакт `razlom-windows` со страницы Actions, а после влития в `main` обновляется релиз `latest`.
 
 ### Android
 Нужен NDK 26+:
@@ -68,7 +68,9 @@ cmake -B build-android -G Ninja \
   -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release
 cmake --build build-android -j
 ```
-CI-конвейер [`.github/workflows/build.yml`](.github/workflows/build.yml) собирает и подписывает `Razlom-Android-arm64.apk` (NativeActivity, `hasCode=false`, GLES3).
+CI-конвейер [`.github/workflows/build.yml`](.github/workflows/build.yml) собирает и подписывает `Razlom-Android-arm64.apk` (NativeActivity, `hasCode=false`, GLES3) — артефакт `razlom-android`.
+
+Размеры готовых сборок (архивы CI): `Razlom-Android-arm64.apk` — **0.39 МБ**, `.exe` — **0.52 МБ**. В APK лежит один ARM64 `librazlom.so` плюс манифест, векторная иконка и тема: ни Java-кода, ни сторонних рантаймов.
 
 ---
 
