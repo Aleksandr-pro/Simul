@@ -1,0 +1,206 @@
+name: РАЗЛОМ — сборка и тесты
+
+on:
+  push:
+    branches:
+      - main
+      - "arena/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    name: "C++20 ядро: тесты и бенчмарк (Linux x64)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Конфигурация
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRAZLOM_BUILD_CLIENT=OFF -DRAZLOM_BUILD_TESTS=ON
+
+      - name: Сборка
+        run: cmake --build build --parallel
+
+      - name: Автотесты (генерация, физика разрушения, вода, сеть)
+        run: ./build/razlom_tests
+
+      - name: Автотесты интерфейса (шрифт, раскладка, кнопки)
+        run: ./build/razlom_ui_tests
+
+      - name: CPU-превью кадров (без GPU)
+        run: |
+          mkdir -p preview
+          ./build/razlom_preview preview
+          ls -la preview
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: razlom-preview
+          path: preview/*.ppm
+          if-no-files-found: warn
+
+      - name: Бенчмарк (бюджет кадра на мобильных)
+        run: ./build/razlom_bench
+
+  linux-client:
+    name: Linux клиент (OpenGL, сборка)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Зависимости sokol_app
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libxcursor-dev libgl1-mesa-dev
+
+      - name: Сборка клиента и сервера
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DRAZLOM_BUILD_CLIENT=ON -DRAZLOM_BUILD_TESTS=ON
+          cmake --build build --parallel
+
+      - name: Проверка бинарников
+        run: |
+          ls -lh build/Razlom build/razlom_server
+          file build/Razlom
+
+  windows-exe:
+    name: Windows x64 (D3D11 .exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Сборка MSVC
+        shell: pwsh
+        run: |
+          cmake -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DRAZLOM_BUILD_CLIENT=ON -DRAZLOM_BUILD_TESTS=ON
+          cmake --build build --config Release --parallel
+
+      - name: Тесты
+        shell: pwsh
+        run: |
+          $test = Get-ChildItem -Path build -Recurse -Filter "razlom_tests.exe" | Select-Object -First 1
+          if (-not $test) { throw "razlom_tests.exe не найден" }
+          & $test.FullName
+
+      - name: Подготовка артефактов
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path build -Recurse -Filter "Razlom.exe" | Select-Object -First 1
+          $server = Get-ChildItem -Path build -Recurse -Filter "razlom_server.exe" | Select-Object -First 1
+          if (-not $exe) { throw "Razlom.exe не найден" }
+          Copy-Item $exe.FullName -Destination "Razlom-Windows-x64.exe"
+          if ($server) { Copy-Item $server.FullName -Destination "Razlom-Server-Windows-x64.exe" }
+          Get-ChildItem Razlom-*.exe | ForEach-Object { "{0}: {1:N0} КБ" -f $_.Name, ($_.Length / 1KB) }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: razlom-windows
+          path: Razlom-*.exe
+          if-no-files-found: error
+
+  android-apk:
+    name: Android ARM64 (.apk, GLES3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Кросс-компиляция и упаковка APK
+        run: |
+          set -euo pipefail
+
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          NDK_ROOT="${ANDROID_NDK_LATEST_HOME:-$(ls -1d "$SDK_ROOT/ndk/"* | sort -V | tail -n 1)}"
+          BUILD_TOOLS="$(ls -1d "$SDK_ROOT/build-tools/"* | sort -V | tail -n 1)"
+          PLATFORM_DIR="$(ls -1d "$SDK_ROOT/platforms/android-"* | sort -V | tail -n 1)"
+          ANDROID_JAR="$PLATFORM_DIR/android.jar"
+          LLVM_BIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          cmake -B build-android -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DRAZLOM_BUILD_CLIENT=ON \
+            -DRAZLOM_BUILD_TESTS=OFF
+
+          cmake --build build-android -j"$(nproc)"
+
+          "$LLVM_BIN/llvm-strip" --strip-unneeded build-android/librazlom.so
+          "$LLVM_BIN/llvm-nm" -D build-android/librazlom.so | grep ANativeActivity_onCreate
+
+          mkdir -p apk_work/compiled_res apk_work/root/lib/arm64-v8a
+
+          "$BUILD_TOOLS/aapt2" compile --dir game/android/res -o apk_work/compiled_res/res.zip
+          "$BUILD_TOOLS/aapt2" link \
+            -o apk_work/unaligned.apk \
+            --manifest game/android/AndroidManifest.xml \
+            -I "$ANDROID_JAR" \
+            apk_work/compiled_res/res.zip
+
+          cp build-android/librazlom.so apk_work/root/lib/arm64-v8a/librazlom.so
+          (cd apk_work/root && zip -0 -r ../unaligned.apk lib/arm64-v8a/librazlom.so)
+
+          "$BUILD_TOOLS/zipalign" -f -p 4 apk_work/unaligned.apk apk_work/aligned.apk
+
+          keytool -genkeypair -v \
+            -keystore apk_work/razlom.keystore \
+            -storepass razlom2026 \
+            -keypass razlom2026 \
+            -alias razlomkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Razlom, OU=Sazndbox, O=Razlom, L=Aktobe, S=Aktobe, C=KZ"
+
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks apk_work/razlom.keystore \
+            --ks-pass pass:razlom2026 \
+            --key-pass pass:razlom2026 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out Razlom-Android-arm64.apk \
+            apk_work/aligned.apk
+
+          "$BUILD_TOOLS/apksigner" verify --verbose Razlom-Android-arm64.apk
+          ls -lh Razlom-Android-arm64.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: razlom-android
+          path: Razlom-Android-arm64.apk
+          if-no-files-found: error
+
+  release:
+    name: Публикация сборок (main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [tests, linux-client, windows-exe, android-apk]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Обновить релиз latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -lh dist
+          NOTES="Автосборка **РАЗЛОМ** (${GITHUB_SHA::7}): нативный C++20, sokol, физика разрушения и мультиплеер по ссылке.
+          - **Windows x64**: Razlom-Windows-x64.exe (D3D11) + Razlom-Server-Windows-x64.exe
+          - **Android ARM64**: Razlom-Android-arm64.apk (GLES3, NativeActivity, без Java/WebView)
+          - **Linux**: соберите из исходников (OpenGL) — конвейер проверяет сборку."
+
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest dist/Razlom-* --clobber
+            gh release edit latest --notes "$NOTES"
+          else
+            gh release create latest dist/Razlom-* --title "РАЗЛОМ — свежая сборка" --notes "$NOTES"
+          fi

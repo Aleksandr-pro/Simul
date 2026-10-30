@@ -1,43 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="pro.simul.viral"
-    android:versionCode="2"
-    android:versionName="0.3.0">
+    package="pro.razlom.game"
+    android:versionCode="1"
+    android:versionName="0.1.0">
 
-    <uses-sdk
-        android:minSdkVersion="26"
-        android:targetSdkVersion="34" />
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
 
-    <!-- Разрешение на сеть для облачной синхронизации общего мира Supabase -->
+    <!-- мультиплеер по ссылке -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Требование OpenGL ES 3.0 для нативного GPU 2D-рендера -->
+    <!-- нативный рендер OpenGL ES 3.0 -->
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
 
-    <!-- 100% нативное C++20 приложение (hasCode="false" — 0 байт Java/WebView!) -->
     <application
-        android:label="ВИРАЛ"
+        android:label="РАЗЛОМ"
         android:icon="@drawable/ic_launcher"
         android:hasCode="false"
         android:extractNativeLibs="true"
-        android:theme="@style/ViralFullscreenTheme">
+        android:theme="@style/RazlomFullscreenTheme">
 
-        <!-- Поддержка вытянутых дисплеев смартфонов 20:9 / 21:9 без чёрных полос -->
-        <meta-data
-            android:name="android.max_aspect"
-            android:value="2.5" />
+        <meta-data android:name="android.max_aspect" android:value="2.5" />
 
         <activity
             android:name="android.app.NativeActivity"
-            android:label="ВИРАЛ"
-            android:screenOrientation="portrait"
+            android:label="РАЗЛОМ"
+            android:screenOrientation="sensorLandscape"
             android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden"
             android:exported="true">
 
             <meta-data
                 android:name="android.app.lib_name"
-                android:value="simul_viral" />
+                android:value="razlom" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
