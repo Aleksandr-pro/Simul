@@ -5,22 +5,19 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Тёмно-неоновый фон студии ВИРАЛ -->
     <path
-        android:fillColor="#0B1120"
+        android:fillColor="#0C0F18"
         android:pathData="M0,0h108v108h-108z" />
-
-    <!-- Внешнее кольцо волны алгоритма -->
     <path
-        android:fillColor="#1E3A8A"
-        android:pathData="M54,18A36,36 0 1,1 53.9,18Z" />
-
+        android:fillColor="#FFC757"
+        android:pathData="M26,34 L54,20 L82,34 L54,48 z" />
     <path
-        android:fillColor="#0F172A"
-        android:pathData="M54,24A30,30 0 1,1 53.9,24Z" />
-
-    <!-- Неоновый треугольник Play -->
+        android:fillColor="#4CC9F0"
+        android:pathData="M26,34 L54,48 L54,82 L26,68 z" />
     <path
-        android:fillColor="#38BDF8"
-        android:pathData="M44,36L74,54L44,72Z" />
+        android:fillColor="#E8695A"
+        android:pathData="M82,34 L82,60 L66,68 L66,48 z" />
+    <path
+        android:fillColor="#69B24C"
+        android:pathData="M82,66 L60,78 L48,92 L72,88 z" />
 </vector>
