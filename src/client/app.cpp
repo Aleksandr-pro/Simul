@@ -711,6 +711,7 @@ void App::handleHudAction(const HudResult& result) {
             error_.clear();
             status_.clear();
             joinAddress_.clear();
+            if (touchMode_) sapp_show_keyboard(true);  // без клавиатуры адрес не ввести
             if (mouseLocked_) {
                 sapp_lock_mouse(false);
                 mouseLocked_ = false;
@@ -723,6 +724,7 @@ void App::handleHudAction(const HudResult& result) {
             break;
         case HudAction::Back:
             if (touchMode_) sapp_show_keyboard(false);
+            if (screen_ == Screen::Loading) disconnectAll();  // отмена загрузки
             screen_ = Screen::Menu;
             error_.clear();
             status_.clear();
@@ -925,7 +927,7 @@ void App::handleTouchBegan(const sapp_event* ev) {
 
         if (screen_ != Screen::Playing) {
             if (screen_ == Screen::Menu || screen_ == Screen::Join || screen_ == Screen::Catalog ||
-                screen_ == Screen::Paused) {
+                screen_ == Screen::Paused || screen_ == Screen::Loading) {
                 hudClick_ = true;
                 hudDown_ = true;
             }

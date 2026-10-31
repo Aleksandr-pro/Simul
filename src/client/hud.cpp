@@ -180,7 +180,7 @@ void Hud::draw(const HudModel& model, const HudInput& input, HudResult& result) 
         case Screen::Menu: drawMenu(model, input, result); break;
         case Screen::Join: drawJoin(model, input, result); break;
         case Screen::Catalog: drawCatalog(model, input, result); break;
-        case Screen::Loading: drawLoading(model); break;
+        case Screen::Loading: drawLoading(model, input, result); break;
         case Screen::Playing: drawPlaying(model, input, result); break;
         case Screen::Paused:
             drawPlaying(model, input, result);
@@ -331,7 +331,7 @@ void Hud::drawCatalog(const HudModel& model, const HudInput& input, HudResult& r
     }
 }
 
-void Hud::drawLoading(const HudModel& model) {
+void Hud::drawLoading(const HudModel& model, const HudInput& input, HudResult& result) {
     const float w = static_cast<float>(width_);
     const float h = static_cast<float>(height_);
     rect(0.0f, 0.0f, w, h, kBgR, kBgG, kBgB, 255);
@@ -347,6 +347,11 @@ void Hud::drawLoading(const HudModel& model) {
     textCentered(w * 0.5f, by + 30.0f * scale_,
                  formatInt(static_cast<int>(model.loadingProgress * 100.0f)) + "%", kMutedR, kMutedG, kMutedB, 255,
                  0.66f * scale_);
+
+    // Отмена: хост мог не ответить, и ждать десять секунд впустую незачем.
+    const float cbw = 300.0f * scale_;
+    const float cbh = 56.0f * scale_;
+    if (button(input, Rect{(w - cbw) * 0.5f, h * 0.72f, cbw, cbh}, "Отмена", false)) result.action = HudAction::Back;
 }
 
 void Hud::drawPlaying(const HudModel& model, const HudInput& input, HudResult& result) {

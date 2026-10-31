@@ -169,7 +169,7 @@ private:
     void drawMenu(const HudModel&, const HudInput&, HudResult&);
     void drawJoin(const HudModel&, const HudInput&, HudResult&);
     void drawCatalog(const HudModel&, const HudInput&, HudResult&);
-    void drawLoading(const HudModel&);
+    void drawLoading(const HudModel&, const HudInput&, HudResult&);
     void drawPlaying(const HudModel&, const HudInput&, HudResult&);
     void drawPaused(const HudModel&, const HudInput&, HudResult&);
     void drawTouchControls(const HudModel&, const HudInput&);

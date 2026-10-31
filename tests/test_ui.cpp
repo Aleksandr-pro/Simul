@@ -288,6 +288,30 @@ TEST(hud_stick_knob_stays_inside) {
     }
 }
 
+// Экран загрузки можно отменить: хост может не ответить, ждать впустую незачем.
+TEST(hud_loading_has_cancel_button) {
+    Hud hud;
+    hud.init(&atlas());
+    HudModel model = menuModel();
+    model.screen = Screen::Loading;
+    HudInput input;
+    input.width = 1280;
+    input.height = 760;
+    input.mouseX = 640.0f;
+    input.mouseY = 760.0f * 0.72f + 20.0f;
+    input.pressed = true;
+    input.down = true;
+    HudResult result;
+    hud.draw(model, input, result);
+    CHECK(result.action == HudAction::Back);
+
+    // мимо кнопки — никакой отмены
+    input.mouseX = 100.0f;
+    HudResult other;
+    hud.draw(model, input, other);
+    CHECK(other.action != HudAction::Back);
+}
+
 // Нажатие по кнопке паузы действительно возвращает действие Pause — раньше
 // на телефоне касание игрового экрана не доходило до HUD.
 TEST(hud_pause_button_triggers_action) {
