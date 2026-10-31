@@ -159,6 +159,22 @@ inline constexpr int kWorldUniformCount = 3;
     }
     )";
 
+    // Запасное небо: если драйвер не собрал градиент (редкие мобильные GL),
+    // рисуем заливку цветом вершин — экран не остаётся пустым в любом случае.
+    inline constexpr const char* kSkyFlatFsGlsl = R"(
+    in vec2 v_pos;
+    in vec4 v_color;
+    out vec4 frag_color;
+    void main() {
+        // Лёгкий вертикальный градиент из тех же цветов, что у вершин.
+        float t = clamp(v_pos.y * 0.25 + 0.5, 0.0, 1.0);
+        frag_color = vec4(v_color.rgb * (0.86 + 0.14 * t), 1.0);
+        if (dot(v_color.rgb, vec3(1.0)) < 0.01) {
+            frag_color = vec4(0.45, 0.71, 0.95, 1.0);  // страховка от чёрного неба
+        }
+    }
+    )";
+
     // ---------------------------------------------------------------- HLSL (D3D11)
 
     inline constexpr const char* kWorldVsHlsl = R"(
@@ -321,6 +337,20 @@ inline constexpr int kWorldUniformCount = 3;
             float glow = exp(-d * 2.4) * 0.32;
             col += float3(1.0, 0.95, 0.78) * (disc * 0.85 + glow) * sun.w;
         }
+        return float4(col, 1.0);
+    }
+    )";
+
+    inline constexpr const char* kSkyFlatFsHlsl = R"(
+    struct fs_in {
+        float4 pos : SV_Position;
+        float2 uv : TEXCOORD0;
+        float4 color : COLOR0;
+    };
+    float4 main(fs_in inp) : SV_Target {
+        float t = saturate(inp.uv.y * 0.25 + 0.5);
+        float3 col = inp.color.rgb * (0.86 + 0.14 * t);
+        if (dot(inp.color.rgb, float3(1.0, 1.0, 1.0)) < 0.01) col = float3(0.45, 0.71, 0.95);
         return float4(col, 1.0);
     }
     )";

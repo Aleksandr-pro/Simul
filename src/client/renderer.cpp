@@ -277,6 +277,13 @@ bool Renderer::initShaders() {
     uiShader_ = sg_make_shader(uiDesc);
     sg_shader_desc skyDesc = makeShader(skyVs.c_str(), skyFs.c_str(), "razlom-sky", false, false, false, true);
     skyShader_ = sg_make_shader(skyDesc);
+    skyUniforms_ = sg_query_shader_state(skyShader_) == SG_RESOURCESTATE_VALID;
+    if (!skyUniforms_) {
+        // Драйвер не осилил градиент — берём плоский вариант без юниформов.
+        const std::string flatFs = hlsl ? std::string(shaders::kSkyFlatFsHlsl) : glsl(shaders::kSkyFlatFsGlsl);
+        sg_shader_desc flat = makeShader(skyVs.c_str(), flatFs.c_str(), "razlom-sky-flat", false, false, false, false);
+        skyShader_ = sg_make_shader(flat);
+    }
 
     if (sg_query_shader_state(worldShader_) != SG_RESOURCESTATE_VALID ||
         sg_query_shader_state(uiShader_) != SG_RESOURCESTATE_VALID) {
@@ -435,6 +442,7 @@ void Renderer::shutdown() {
     cloudBuffer_ = {};
     cloudVertices_ = 0;
     if (skyShader_.id != 0) sg_destroy_shader(skyShader_);
+    skyUniforms_ = false;
     skyBuffer_ = {};
     uiBuffer_ = {};
     dynamicBuffer_ = {};
@@ -663,9 +671,11 @@ void Renderer::render(const FrameData& frame) {
 
     // --- 1. небо ---
     if (frame.showSky && skyBuffer_.id != 0 && skyPipeline_.id != 0) {
-        const SkyParams sky = skyParamsFor(frame);
         sg_apply_pipeline(skyPipeline_);
-        sg_apply_uniforms(0, sg_range{&sky, sizeof(sky)});
+        if (skyUniforms_) {
+            const SkyParams sky = skyParamsFor(frame);
+            sg_apply_uniforms(0, sg_range{&sky, sizeof(sky)});
+        }
         sg_bindings bind{};
         bind.vertex_buffers[0] = skyBuffer_;
         sg_apply_bindings(&bind);

@@ -162,6 +162,7 @@ private:
     sg_image whiteImage_{};
     sg_view whiteView_{};
     sg_view uiView() const { return fontView_.id != 0 ? fontView_ : whiteView_; }
+    bool skyUniforms_ = false;  // у неба есть юниформы (advanced-шейдер собрался)
     bool fontOk_ = false;
     bool ensureWhiteTexture();
     const char* backendName_ = "?";
