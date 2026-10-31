@@ -283,7 +283,10 @@ razlom::client::HudModel baseModel(razlom::client::Screen screen) {
     model.toastTimer = 2.0f;
     model.showTouch = false;
     // та же диагностическая строка, что клиент показывает в игре (Renderer::statsLine)
-    model.stats = "GLES3 · 2340x1080 · 34 выз. · 27 чанков";
+    model.stats = "GLES3 · 2340x1080 · 34 выз. · 27 чанков · 64,36,64";
+    model.flying = true;
+    model.stickDX = 0.35f;
+    model.stickDY = 0.8f;
     razlom::client::HudPlayerRow self;
     self.name = "Игрок";
     self.health = 82;
@@ -294,7 +297,7 @@ razlom::client::HudModel baseModel(razlom::client::Screen screen) {
     model.players = {self, friend_};
     model.log = {"Мир загружен: Песочница", "Друг присоединился"};
     model.tipsTimer = 14.0f;
-    model.tips = {"Сломай опору башни — она упадёт", "ЛКМ — ломать, ПКМ — ставить, E — взрыв",
+    model.tips = {"Сломай опору башни — она упадёт", "ЛОМ/СТАВ — блоки, ТНТ — взрыв, ПОЛЁТ — летать",
                   "Esc — пауза и ссылка для друзей"};
     const uint8_t hotbar[9] = {razlom::kStone,  razlom::kBrick,  razlom::kPlanks, razlom::kLog, razlom::kSand,
                                razlom::kGlass, razlom::kStoneBrick, razlom::kDirt, razlom::kTnt};

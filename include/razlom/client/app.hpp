@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "razlom/client/controls.hpp"
 #include "razlom/client/font.hpp"
 #include "razlom/client/hud.hpp"
 #include "razlom/client/renderer.hpp"
@@ -57,12 +58,19 @@ private:
     void addToast(const std::string& text);
     void look(float dx, float dy);
     void buildHudModel(HudModel& model, const HudInput& input);
+    std::string statsWithPosition() const;
     void handleHudAction(const HudResult& result);
     void handleKeyDown(const sapp_event* ev);
     void handleKeyUp(const sapp_event* ev);
     void handleTouchBegan(const sapp_event* ev);
     void handleTouchMoved(const sapp_event* ev);
     void handleTouchEnded(const sapp_event* ev);
+    void refreshDownTouches(const sapp_event* ev, bool ended);
+    void syncTouchLayout();
+    void applyLook();
+    void toggleFlight();
+    void pickBlock(bool toSlot);
+    void fixStuckPlayer();
     bool isEditingText() const { return screen_ == Screen::Join; }
 
     Renderer renderer_;
@@ -110,23 +118,25 @@ private:
     bool hudClick_ = false;
     bool hudDown_ = false;
 
-    // тач
-    uintptr_t stickTouch_ = 0;
-    uintptr_t lookTouch_ = 0;
-    float stickOriginX_ = 0.0f;
-    float stickOriginY_ = 0.0f;
-    float stickDX_ = 0.0f;
-    float stickDY_ = 0.0f;
-    float lookLastX_ = 0.0f;
-    float lookLastY_ = 0.0f;
+    // тач: владение пальцами, стик, обзор и кнопки живут в TouchControls
+    TouchControls controls_;
+    std::vector<TouchId> downTouches_;
     bool jumpRequested_ = false;
+    float spaceTapTimer_ = 1.0f;   // время с прошлого нажатия пробела (двойной тап = полёт)
+    float emptyFrameTimer_ = 0.0f;  // сколько секунд подряд в кадре нет ни одного чанка
+    bool sprintHeld_ = false;
 
-    // ввод действий
+    // ввод действий: эффективные значения собираются из мыши и сенсора
+    bool mouseBreakHeld_ = false;
+    bool mousePlaceHeld_ = false;
     bool breakHeld_ = false;
     bool placeHeld_ = false;
+    bool prevBreakHeld_ = false;
+    bool prevPlaceHeld_ = false;
     float breakCooldown_ = 0.0f;
     float placeCooldown_ = 0.0f;
     float attackCooldown_ = 0.0f;
+    float explodeCooldown_ = 0.0f;
     float inputAccumulator_ = 0.0f;
     float pingAccumulator_ = 0.0f;
     float joinTimer_ = 0.0f;

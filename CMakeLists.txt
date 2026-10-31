@@ -61,6 +61,11 @@ if(RAZLOM_BUILD_TESTS AND NOT ANDROID)
     target_link_libraries(razlom_tests PRIVATE razlom_core)
     add_test(NAME razlom_tests COMMAND razlom_tests)
 
+    # Сенсорное управление: владение пальцами, дедзона стика, страховка от залипаний
+    add_executable(razlom_controls_tests tests/test_controls.cpp)
+    target_include_directories(razlom_controls_tests PRIVATE ${RAZLOM_INCLUDES})
+    add_test(NAME razlom_controls_tests COMMAND razlom_controls_tests)
+
     # Исходники шейдеров: ловят то, чего не видно без GPU (uniform-блоки в GLSL и т.п.)
     add_executable(razlom_shader_tests tests/test_shaders.cpp)
     target_include_directories(razlom_shader_tests PRIVATE ${RAZLOM_INCLUDES})

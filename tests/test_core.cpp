@@ -456,4 +456,75 @@ TEST(session_modes_and_damage) {
     CHECK(b->health < 100);
 }
 
+// --- Границы мира: без них игрок улетает/уходит за край карты, и «мир пропадает»
+// (видно только небо). Проверяем, что мир держит игрока и что застрявшего
+// в породе можно вытащить.
+TEST(player_is_kept_inside_the_world) {
+    World w(7);
+    makeFloor(w);
+    const float maxY = static_cast<float>(World::kSizeY) - kPlayerHeight;
+
+    const Vec3 far = clampToWorld(Vec3{500.0f, 500.0f, -400.0f});
+    CHECK(far.x <= static_cast<float>(World::kSizeX));
+    CHECK(far.x >= 0.0f);
+    CHECK(far.z >= 0.0f);
+    CHECK(far.y <= maxY + 0.001f);
+    CHECK(far.y >= 0.0f);
+
+    const Vec3 inside = clampToWorld(Vec3{64.5f, 40.0f, 64.5f});
+    CHECK_NEAR(inside.x, 64.5f, 1e-4);
+    CHECK_NEAR(inside.y, 40.0f, 1e-4);
+    CHECK_NEAR(inside.z, 64.5f, 1e-4);
+}
+
+// За краем карты нет геометрии: считать это «пустотой» нельзя, иначе игрок
+// проваливается в бездну и видит пустоту.
+TEST(outside_world_is_solid) {
+    World w(7);
+    makeFloor(w);
+    CHECK(collidesAt(w, Vec3{-3.0f, 10.0f, 64.0f}));
+    CHECK(collidesAt(w, Vec3{static_cast<float>(World::kSizeX) + 2.0f, 10.0f, 64.0f}));
+    CHECK(collidesAt(w, Vec3{64.0f, static_cast<float>(World::kSizeY) + 2.0f, 64.0f}));
+    CHECK(!collidesAt(w, Vec3{64.5f, 10.0f, 64.5f}));  // над полом — свободно
+}
+
+// Обрушение может засыпать игрока блоками: камера внутри породы видит «пустой
+// мир». Ловим это и находим свободное место выше.
+TEST(buried_player_can_be_freed) {
+    World w(7);
+    makeFloor(w);
+    for (int y = 1; y <= 5; ++y)
+        for (int z = 60; z <= 68; ++z)
+            for (int x = 60; x <= 68; ++x) w.set(x, y, z, kStone);
+
+    const Vec3 buried{64.5f, 2.0f, 64.5f};
+    CHECK(collidesAt(w, buried));
+    CHECK(pointInsideSolid(w, buried + Vec3{0.0f, kEyeHeight, 0.0f}));
+
+    Vec3 free_;
+    CHECK(findFreeSpot(w, buried, free_));
+    CHECK(!collidesAt(w, free_));
+    CHECK(free_.y > buried.y);
+
+    // Над открытым полем игрок не считается застрявшим.
+    const Vec3 open{64.5f, 12.0f, 64.5f};
+    CHECK(!collidesAt(w, open));
+    CHECK(!pointInsideSolid(w, open + Vec3{0.0f, kEyeHeight, 0.0f}));
+}
+
+// Игрок, который «вылетел» за край, возвращается в мир и остаётся на месте.
+TEST(flying_out_of_world_is_impossible) {
+    World w(7);
+    makeFloor(w);
+    Vec3 pos{64.5f, 30.0f, 64.5f};
+    const Vec3 vel{60.0f, 0.0f, 0.0f};
+    for (int i = 0; i < 200; ++i) {
+        const MoveResult r = movePlayer(w, pos, vel, 0.05f, true);
+        pos = clampToWorld(r.pos);
+    }
+    CHECK(pos.x < static_cast<float>(World::kSizeX));
+    CHECK(pos.x > static_cast<float>(World::kSizeX) * 0.5f);
+    CHECK(!collidesAt(w, pos));
+}
+
 int main() { return test::runAll(); }

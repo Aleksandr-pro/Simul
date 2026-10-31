@@ -35,6 +35,9 @@ jobs:
       - name: Автотесты шейдеров (uniform-блоки GLSL, имена uniform'ов, точки входа)
         run: ./build/razlom_shader_tests
 
+      - name: Автотесты управления (владение пальцами, стик, залипания)
+        run: ./build/razlom_controls_tests
+
       - name: CPU-превью кадров (без GPU)
         run: |
           mkdir -p preview

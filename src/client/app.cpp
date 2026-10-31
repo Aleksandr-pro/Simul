@@ -193,12 +193,17 @@ void App::beginWorld(uint32_t seed, GameMode mode, const std::vector<BlockChange
     // Если сервер уже знает нашу позицию — берём её.
     for (const net::PlayerSnapshot& p : playersFromWelcome_) {
         if (p.id == selfId_) {
-            local_.pos = p.pos;
+            local_.pos = clampToWorld(p.pos);
             local_.yaw = p.yaw;
             break;
         }
     }
+    local_.pos = clampToWorld(local_.pos);
 
+    controls_.reset();
+    downTouches_.clear();
+    mouseBreakHeld_ = false;
+    mousePlaceHeld_ = false;
     addLog(std::string("Мир загружен: ") + gameModeName(mode));
     loadingTimer_ = 0.0f;
     loadingProgress_ = 0.0f;
@@ -287,7 +292,8 @@ void App::handleNetwork(float dt) {
         local_.health = p.health;
         local_.dead = (p.flags & net::kFlagDead) != 0;
         if ((p.pos - local_.pos).lengthSq() > 2.5f * 2.5f && screen_ == Screen::Playing) {
-            local_.pos = p.pos;
+            // сервер может прислать позицию у края карты — не выходим за мир
+            local_.pos = clampToWorld(p.pos);
         }
         break;
     }
@@ -308,39 +314,47 @@ void App::updateMovement(float dt) {
     }
 
     const Camera camera{local_.pos + Vec3{0.0f, kEyeHeight, 0.0f}, local_.yaw, local_.pitch};
-    (void)camera;
 
-    Vec3 forwardFlat{-std::sin(local_.yaw), 0.0f, -std::cos(local_.yaw)};
-    Vec3 rightFlat{std::cos(local_.yaw), 0.0f, -std::sin(local_.yaw)};
-
+    // --- направление желаемого движения ---
     float moveForward = 0.0f;
     float moveRight = 0.0f;
     if (keys_[SAPP_KEYCODE_W] || keys_[SAPP_KEYCODE_UP]) moveForward += 1.0f;
     if (keys_[SAPP_KEYCODE_S] || keys_[SAPP_KEYCODE_DOWN]) moveForward -= 1.0f;
     if (keys_[SAPP_KEYCODE_D] || keys_[SAPP_KEYCODE_RIGHT]) moveRight += 1.0f;
     if (keys_[SAPP_KEYCODE_A] || keys_[SAPP_KEYCODE_LEFT]) moveRight -= 1.0f;
-    moveForward += stickDY_;
-    moveRight += stickDX_;
+    const StickReading stick = controls_.stick();
+    moveForward += stick.dy;
+    moveRight += stick.dx;
+    moveForward = clampf(moveForward, -1.0f, 1.0f);
+    moveRight = clampf(moveRight, -1.0f, 1.0f);
 
-    Vec3 wish = forwardFlat * moveForward + rightFlat * moveRight;
-    if (wish.lengthSq() > 1.0f) wish = wish.normalized();
-    const float wishLen = std::min(1.0f, wish.length());
+    const bool wantJump = keys_[SAPP_KEYCODE_SPACE] || jumpRequested_ || controls_.jumpHeld();
+    const bool wantDown = keys_[SAPP_KEYCODE_LEFT_SHIFT] || keys_[SAPP_KEYCODE_LEFT_CONTROL];
+    sprintHeld_ = keys_[SAPP_KEYCODE_LEFT_SHIFT] || keys_[SAPP_KEYCODE_RIGHT_SHIFT] || controls_.sprinting();
 
     if (local_.flying) {
-        Vec3 velocity = wish * (kFlySpeed * wishLen);
-        if (keys_[SAPP_KEYCODE_SPACE] || jumpRequested_) velocity.y += kFlySpeed;
-        if (keys_[SAPP_KEYCODE_LEFT_SHIFT] || keys_[SAPP_KEYCODE_LEFT_CONTROL]) velocity.y -= kFlySpeed;
+        // В полёте движение идёт по направлению взгляда: посмотрел вниз и подал
+        // стик вперёд — снижаешься. На телефоне это единственный способ летать
+        // вниз без отдельной кнопки.
+        Vec3 rightFlat{std::cos(local_.yaw), 0.0f, -std::sin(local_.yaw)};
+        Vec3 wish = camera.forward() * moveForward + rightFlat * moveRight;
+        const float wishLen = std::min(1.0f, wish.length());
+        Vec3 velocity = wish.normalized() * (kFlySpeed * wishLen);
+        if (wantJump) velocity.y += kFlySpeed;   // удержание — плавный подъём
+        if (wantDown && !wantJump) velocity.y -= kFlySpeed;
         const MoveResult result = movePlayer(world_, local_.pos, velocity, dt, true);
         local_.pos = result.pos;
         local_.onGround = false;
+        local_.vel = velocity;
     } else {
-        const bool sprint = keys_[SAPP_KEYCODE_LEFT_SHIFT];
-        const float speed = sprint ? kSprintSpeed : kWalkSpeed;
-        Vec3 velocity = wish * (speed * wishLen);
+        const float speed = sprintHeld_ ? kSprintSpeed : kWalkSpeed;
+        const Vec3 forwardFlat{-std::sin(local_.yaw), 0.0f, -std::cos(local_.yaw)};
+        const Vec3 rightFlat{std::cos(local_.yaw), 0.0f, -std::sin(local_.yaw)};
+        Vec3 wish = forwardFlat * moveForward + rightFlat * moveRight;
+        const float wishLen = std::min(1.0f, wish.length());
+        Vec3 velocity = wish.normalized() * (speed * wishLen);
         velocity.y = local_.vel.y - kGravity * dt;
-        if ((keys_[SAPP_KEYCODE_SPACE] || jumpRequested_) && local_.onGround) {
-            velocity.y = kJumpSpeed;
-        }
+        if (wantJump && local_.onGround) velocity.y = kJumpSpeed;
         velocity.y = std::max(velocity.y, -58.0f);
         const MoveResult result = movePlayer(world_, local_.pos, velocity, dt, false);
         local_.pos = result.pos;
@@ -350,10 +364,60 @@ void App::updateMovement(float dt) {
     }
     jumpRequested_ = false;
 
-    if (local_.pos.y < -8.0f) {
+    // --- границы мира: за ними геометрии нет, поэтому не выпускаем игрока ---
+    const Vec3 clamped = clampToWorld(local_.pos);
+    if (clamped.x != local_.pos.x) local_.vel.x = 0.0f;
+    if (clamped.y != local_.pos.y) local_.vel.y = 0.0f;
+    if (clamped.z != local_.pos.z) local_.vel.z = 0.0f;
+    local_.pos = clamped;
+}
+
+// Камера внутри породы видна как пустой мир: все грани смотрят наружу и
+// отсекаются. Так игрок оказывается «в нигде» после обрушения — чиним сразу.
+void App::fixStuckPlayer() {
+    if (!worldReady_) return;
+    const Vec3 eye = local_.pos + Vec3{0.0f, kEyeHeight, 0.0f};
+    const bool feetStuck = collidesAt(world_, local_.pos);
+    const bool eyeStuck = pointInsideSolid(world_, eye);
+    if (!feetStuck && !eyeStuck) return;
+
+    Vec3 spot;
+    if (findFreeSpot(world_, local_.pos, spot)) {
+        local_.pos = spot;
+        local_.vel = Vec3{};
+        addToast("Вы оказались внутри блоков — поднял наверх");
+    } else {
         local_.pos = spawnPosition(world_);
         local_.vel = Vec3{};
-        addToast("Вы упали в бездну — вернули на спавн");
+        addToast("Из-под завала не выбраться — вернул на спавн");
+    }
+}
+
+void App::toggleFlight() {
+    if (mode_ != GameMode::Sandbox) return;
+    local_.flying = !local_.flying;
+    local_.vel = Vec3{};
+    addToast(local_.flying ? "Полёт включён" : "Полёт выключен");
+}
+
+// Средняя кнопка мыши в креативе: взять блок под прицелом.
+void App::pickBlock(bool toSlot) {
+    if (!worldReady_ || hotbar_.empty()) return;
+    const Vec3 eye = local_.pos + Vec3{0.0f, kEyeHeight, 0.0f};
+    const Camera camera{eye, local_.yaw, local_.pitch};
+    const RayHit hit = raycastVoxel(world_, eye, camera.forward(), kReachDistance);
+    if (!hit.hit) return;
+    const uint8_t block = world_.get(hit.block.x, hit.block.y, hit.block.z);
+    if (block == kAir) return;
+    for (size_t i = 0; i < hotbar_.size(); ++i) {
+        if (hotbar_[i] == block) {
+            local_.slot = static_cast<uint8_t>(i);
+            return;
+        }
+    }
+    if (toSlot) {
+        hotbar_[static_cast<size_t>(local_.slot) % hotbar_.size()] = block;
+        addToast(std::string("В слот: ") + blockDef(block).name);
     }
 }
 
@@ -367,7 +431,7 @@ void App::sendInput(float dt) {
     if (local_.flying) flags |= net::kFlagFlying;
     if (local_.onGround) flags |= net::kFlagOnGround;
     if (local_.dead) flags |= net::kFlagDead;
-    if (keys_[SAPP_KEYCODE_LEFT_SHIFT]) flags |= net::kFlagSprint;
+    if (sprintHeld_) flags |= net::kFlagSprint;
     client_.sendInput(local_.pos, local_.yaw, local_.pitch, flags, local_.slot);
 }
 
@@ -381,13 +445,30 @@ void App::tryEdit(bool breakBlock) {
     if (breakBlock) {
         client_.sendBreak(hit.block);
     } else {
+        // не ставим блок внутрь себя: иначе игрок оказывается в породе и «мир пропадает»
+        const float px0 = local_.pos.x - kPlayerHalfWidth;
+        const float px1 = local_.pos.x + kPlayerHalfWidth;
+        const float pz0 = local_.pos.z - kPlayerHalfWidth;
+        const float pz1 = local_.pos.z + kPlayerHalfWidth;
+        const float py0 = local_.pos.y;
+        const float py1 = local_.pos.y + kPlayerHeight;
+        const float bx = static_cast<float>(hit.previous.x);
+        const float by = static_cast<float>(hit.previous.y);
+        const float bz = static_cast<float>(hit.previous.z);
+        const bool hitsSelf = bx + 1.0f > px0 && bx < px1 && by + 1.0f > py0 && by < py1 && bz + 1.0f > pz0 &&
+                              bz < pz1;
+        if (hitsSelf) {
+            addToast("Блок не влез — тут стоите вы");
+            return;
+        }
         const uint8_t block = hotbar_[static_cast<size_t>(local_.slot) % hotbar_.size()];
         client_.sendPlace(hit.previous, block);
     }
 }
 
 void App::triggerExplosion() {
-    if (!worldReady_ || !client_.connected()) return;
+    if (!worldReady_ || !client_.connected() || explodeCooldown_ > 0.0f) return;
+    explodeCooldown_ = 0.5f;
     const Vec3 eye = local_.pos + Vec3{0.0f, kEyeHeight, 0.0f};
     const Camera camera{eye, local_.yaw, local_.pitch};
     const RayHit hit = raycastVoxel(world_, eye, camera.forward(), kReachDistance);
@@ -398,6 +479,7 @@ void App::triggerExplosion() {
 
 void App::updatePlaying(float dt) {
     updateMovement(dt);
+    fixStuckPlayer();
 
     // подсветка блока под прицелом
     hasHighlight_ = false;
@@ -414,6 +496,7 @@ void App::updatePlaying(float dt) {
     breakCooldown_ -= dt;
     placeCooldown_ -= dt;
     if (attackCooldown_ > 0.0f) attackCooldown_ -= dt;
+    if (explodeCooldown_ > 0.0f) explodeCooldown_ -= dt;
     if (breakHeld_ && breakCooldown_ <= 0.0f) {
         tryEdit(true);
         breakCooldown_ = 0.24f;
@@ -438,6 +521,7 @@ void App::updatePlaying(float dt) {
 void App::frame() {
     const float dt = clampf(static_cast<float>(stm_sec(stm_laptime(&lastFrameTime_))), 0.0f, 0.05f);
     time_ += dt;
+    spaceTapTimer_ += dt;
     fpsAccumulator_ += dt;
     ++fpsFrames_;
     if (fpsAccumulator_ >= 0.5f) {
@@ -453,6 +537,20 @@ void App::frame() {
         screenHeight_ = fbHeight;
     }
     renderer_.setScreenSize(screenWidth_, screenHeight_);
+    syncTouchLayout();
+
+    // Страховка от потерянных касаний: если владелец роли больше не на экране —
+    // роль сбрасывается. Иначе залипший стик уводит игрока из мира.
+    controls_.syncDown(downTouches_);
+    if (screen_ == Screen::Playing) {
+        applyLook();
+    }
+    breakHeld_ = mouseBreakHeld_ || controls_.breakHeld();
+    placeHeld_ = mousePlaceHeld_ || controls_.placeHeld();
+    if (breakHeld_ && !prevBreakHeld_) breakCooldown_ = 0.0f;  // первый блок — сразу
+    if (placeHeld_ && !prevPlaceHeld_) placeCooldown_ = 0.0f;
+    prevBreakHeld_ = breakHeld_;
+    prevPlaceHeld_ = placeHeld_;
 
     handleNetwork(dt);
 
@@ -515,6 +613,33 @@ void App::frame() {
     frameData.maxRemesh = 8;
     frameData.showSky = true;
     renderer_.render(frameData);
+
+    // Диагностика «мир пропал»: если в кадре нет ни одного чанка, пишем это в
+    // журнал прямо на экране — по скриншоту сразу видно, что случилось.
+    if (screen_ == Screen::Playing && worldReady_) {
+        if (renderer_.visibleChunks() == 0) {
+            emptyFrameTimer_ += dt;
+            if (emptyFrameTimer_ > 1.5f) {
+                emptyFrameTimer_ = 0.0f;
+                char buf[96];
+                std::snprintf(buf, sizeof(buf), "Мир вне кадра: %.0f,%.0f,%.0f · вызовов %d",
+                              static_cast<double>(local_.pos.x), static_cast<double>(local_.pos.y),
+                              static_cast<double>(local_.pos.z), renderer_.drawCalls());
+                addLog(buf);
+            }
+        } else {
+            emptyFrameTimer_ = 0.0f;
+        }
+    }
+}
+
+// Диагностическая строка кадра: сюда же кладём позицию камеры, чтобы по одному
+// скриншоту было видно, где игрок оказался, если мир вдруг «пропал».
+std::string App::statsWithPosition() const {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), " · %.0f,%.0f,%.0f", static_cast<double>(local_.pos.x),
+                  static_cast<double>(local_.pos.y), static_cast<double>(local_.pos.z));
+    return renderer_.statsLine() + buf;
 }
 
 void App::buildHudModel(HudModel& model, const HudInput& input) {
@@ -541,14 +666,21 @@ void App::buildHudModel(HudModel& model, const HudInput& input) {
     model.toast = toast_;
     model.toastTimer = toastTimer_;
     model.showTouch = touchMode_;
-    model.stats = renderer_.statsLine();
+    model.flying = local_.flying;
+    model.breakActive = breakHeld_;
+    model.placeActive = placeHeld_;
+    model.jumpActive = controls_.jumpHeld();
+    const StickReading stick = controls_.stick();
+    model.stickDX = stick.dx;
+    model.stickDY = stick.dy;
+    model.stats = statsWithPosition();
     model.tipsTimer = tipsTimer_;
     model.tips = touchMode_ ? std::vector<std::string>{"Сломай опору башни — она упадёт",
                                                        "Стик — идти, свайп справа — смотреть",
-                                                       "ЛОМ и СТАВ — блоки, ТНТ — взрыв"}
+                                                       "ЛОМ/СТАВ — блоки, ТНТ — взрыв, ПОЛЁТ — летать"}
                             : std::vector<std::string>{"Сломай опору башни — она упадёт",
-                                                       "ЛКМ — ломать, ПКМ — ставить, E — взрыв",
-                                                       "Esc — пауза и ссылка для друзей"};
+                                                       "ЛКМ/ПКМ — ломать и ставить, E — взрыв",
+                                                       "Двойной пробел или F — полёт, Esc — пауза"};
 
     model.players.clear();
     for (const net::PlayerSnapshot& p : players_) {
@@ -579,6 +711,7 @@ void App::handleHudAction(const HudResult& result) {
             error_.clear();
             status_.clear();
             joinAddress_.clear();
+            if (touchMode_) sapp_show_keyboard(true);  // без клавиатуры адрес не ввести
             if (mouseLocked_) {
                 sapp_lock_mouse(false);
                 mouseLocked_ = false;
@@ -591,6 +724,7 @@ void App::handleHudAction(const HudResult& result) {
             break;
         case HudAction::Back:
             if (touchMode_) sapp_show_keyboard(false);
+            if (screen_ == Screen::Loading) disconnectAll();  // отмена загрузки
             screen_ = Screen::Menu;
             error_.clear();
             status_.clear();
@@ -640,6 +774,9 @@ void App::handleHudAction(const HudResult& result) {
             break;
         case HudAction::Pause:
             screen_ = Screen::Paused;
+            controls_.reset();
+            mouseBreakHeld_ = false;
+            mousePlaceHeld_ = false;
             if (mouseLocked_) {
                 sapp_lock_mouse(false);
                 mouseLocked_ = false;
@@ -685,18 +822,25 @@ void App::handleKeyDown(const sapp_event* ev) {
                 sapp_lock_mouse(false);
                 mouseLocked_ = false;
             }
-            breakHeld_ = false;
-            placeHeld_ = false;
+            mouseBreakHeld_ = false;
+            mousePlaceHeld_ = false;
+            controls_.reset();
             return;
         }
         if (repeat) return;
         if (ev->key_code >= SAPP_KEYCODE_1 && ev->key_code <= SAPP_KEYCODE_9) {
             local_.slot = static_cast<uint8_t>(ev->key_code - SAPP_KEYCODE_1);
         } else if (ev->key_code == SAPP_KEYCODE_F) {
-            if (mode_ == GameMode::Sandbox) {
-                local_.flying = !local_.flying;
-                addToast(local_.flying ? "Полёт включён" : "Полёт выключен");
+            toggleFlight();
+        } else if (ev->key_code == SAPP_KEYCODE_SPACE) {
+            // двойной пробел — классическое переключение полёта в креативе
+            if (mode_ == GameMode::Sandbox && spaceTapTimer_ < 0.32f) {
+                toggleFlight();
+                spaceTapTimer_ = 1.0f;
+            } else {
+                spaceTapTimer_ = 0.0f;
             }
+            jumpRequested_ = true;
         } else if (ev->key_code == SAPP_KEYCODE_Q) {
             if (attackCooldown_ <= 0.0f) {
                 client_.sendAttack();
@@ -728,133 +872,115 @@ void App::handleKeyUp(const sapp_event* ev) {
     if (ev->key_code < 512) keys_[ev->key_code] = false;
 }
 
+void App::refreshDownTouches(const sapp_event* ev, bool ended) {
+    downTouches_.clear();
+    downTouches_.reserve(static_cast<size_t>(ev->num_touches));
+    for (int i = 0; i < ev->num_touches; ++i) {
+        const sapp_touchpoint& t = ev->touches[i];
+        if (ended && t.changed) continue;  // этот палец уже поднят
+        downTouches_.push_back(static_cast<TouchId>(t.identifier));
+    }
+}
+
+void App::syncTouchLayout() {
+    const TouchLayout& tl = hud_.layout(screenWidth_, screenHeight_);
+    TouchControls::Layout l;
+    auto toRect = [](const Rect& r) {
+        ControlRect o;
+        o.x = r.x;
+        o.y = r.y;
+        o.w = r.w;
+        o.h = r.h;
+        return o;
+    };
+    l.stick = toRect(tl.stick);
+    l.jump = toRect(tl.jump);
+    l.breakBlock = toRect(tl.breakBlock);
+    l.placeBlock = toRect(tl.placeBlock);
+    l.explode = toRect(tl.explode);
+    l.fly = toRect(tl.fly);
+    l.attack = toRect(tl.attack);
+    for (int i = 0; i < 9; ++i) l.hotbar[i] = toRect(tl.hotbar[i]);
+    l.stickRadius = 70.0f * hud_.scale();
+    l.lookMinX = static_cast<float>(screenWidth_) * 0.32f;
+    controls_.setLayout(l);
+}
+
+void App::applyLook() {
+    float dx = 0.0f;
+    float dy = 0.0f;
+    if (!controls_.takeLook(dx, dy)) return;
+    local_.yaw -= dx * kTouchSensitivity;
+    local_.pitch -= dy * kTouchSensitivity;
+    local_.pitch = clampf(local_.pitch, -1.53f, 1.53f);
+}
+
 void App::handleTouchBegan(const sapp_event* ev) {
     touchMode_ = true;
-    const TouchLayout& layout = hud_.layout(screenWidth_, screenHeight_);
+    refreshDownTouches(ev, false);
 
     for (int i = 0; i < ev->num_touches; ++i) {
         const sapp_touchpoint& touch = ev->touches[i];
         if (!touch.changed) continue;
-        const float x = touch.pos_x;
-        const float y = touch.pos_y;
-        mouseX_ = x;
-        mouseY_ = y;
+        mouseX_ = touch.pos_x;
+        mouseY_ = touch.pos_y;
 
-        if (screen_ == Screen::Menu || screen_ == Screen::Join || screen_ == Screen::Catalog ||
-            screen_ == Screen::Paused) {
+        if (screen_ != Screen::Playing) {
+            if (screen_ == Screen::Menu || screen_ == Screen::Join || screen_ == Screen::Catalog ||
+                screen_ == Screen::Paused || screen_ == Screen::Loading) {
+                hudClick_ = true;
+                hudDown_ = true;
+            }
+            continue;
+        }
+
+        const TouchLayout& tl = hud_.layout(screenWidth_, screenHeight_);
+        if (tl.pause.contains(touch.pos_x, touch.pos_y)) {
+            // кнопка паузы: раньше её нажатие на телефоне не доходило до HUD
             hudClick_ = true;
             hudDown_ = true;
             continue;
         }
-        if (screen_ != Screen::Playing) continue;
 
-        // кнопки действий
-        if (layout.breakBlock.contains(x, y)) {
-            breakHeld_ = true;
-            breakCooldown_ = 0.0f;
-            continue;
-        }
-        if (layout.placeBlock.contains(x, y)) {
-            placeHeld_ = true;
-            placeCooldown_ = 0.0f;
-            continue;
-        }
-        if (layout.jump.contains(x, y)) {
-            jumpRequested_ = true;
-            continue;
-        }
-        if (layout.explode.contains(x, y)) {
+        const TouchControls::Events evs = controls_.begin(static_cast<TouchId>(touch.identifier),
+                                                          touch.pos_x, touch.pos_y);
+        if (evs.slot >= 0) {
+            local_.slot = static_cast<uint8_t>(evs.slot);
+        } else if (evs.explode) {
             triggerExplosion();
-            continue;
-        }
-        if (layout.fly.contains(x, y)) {
-            if (mode_ == GameMode::Sandbox) local_.flying = !local_.flying;
-            continue;
-        }
-        if (layout.attack.contains(x, y)) {
-            client_.sendAttack();
-            attackCooldown_ = 0.35f;
-            continue;
-        }
-        for (int slotIndex = 0; slotIndex < 9; ++slotIndex) {
-            if (layout.hotbar[slotIndex].contains(x, y)) {
-                local_.slot = static_cast<uint8_t>(slotIndex);
-                break;
+        } else if (evs.fly) {
+            toggleFlight();
+        } else if (evs.attack) {
+            if (attackCooldown_ <= 0.0f) {
+                client_.sendAttack();
+                attackCooldown_ = 0.35f;
             }
-        }
-        if (layout.stick.contains(x, y)) {
-            stickTouch_ = touch.identifier;
-            stickOriginX_ = layout.stick.cx();
-            stickOriginY_ = layout.stick.cy();
-            continue;
-        }
-        // правая половина — обзор
-        if (x > static_cast<float>(screenWidth_) * 0.35f && lookTouch_ == 0 && stickTouch_ != touch.identifier) {
-            lookTouch_ = touch.identifier;
-            lookLastX_ = x;
-            lookLastY_ = y;
+        } else if (evs.jumpTap) {
+            jumpRequested_ = true;
         }
     }
 }
 
 void App::handleTouchMoved(const sapp_event* ev) {
+    refreshDownTouches(ev, false);
     for (int i = 0; i < ev->num_touches; ++i) {
         const sapp_touchpoint& touch = ev->touches[i];
-        const float x = touch.pos_x;
-        const float y = touch.pos_y;
-
-        if (touch.identifier == stickTouch_) {
-            const float dx = x - stickOriginX_;
-            const float dy = y - stickOriginY_;
-            const float radius = 70.0f * hud_.scale();
-            stickDX_ = clampf(dx / radius, -1.0f, 1.0f);
-            stickDY_ = clampf(-dy / radius, -1.0f, 1.0f);
-            const float len = std::sqrt(stickDX_ * stickDX_ + stickDY_ * stickDY_);
-            if (len < 0.16f) {
-                stickDX_ = 0.0f;
-                stickDY_ = 0.0f;
-            }
-        } else if (touch.identifier == lookTouch_) {
-            const float dx = x - lookLastX_;
-            const float dy = y - lookLastY_;
-            local_.yaw -= dx * kTouchSensitivity;
-            local_.pitch -= dy * kTouchSensitivity;
-            local_.pitch = clampf(local_.pitch, -1.53f, 1.53f);
-            lookLastX_ = x;
-            lookLastY_ = y;
-        }
-        mouseX_ = x;
-        mouseY_ = y;
+        controls_.move(static_cast<TouchId>(touch.identifier), touch.pos_x, touch.pos_y);
+        mouseX_ = touch.pos_x;
+        mouseY_ = touch.pos_y;
     }
 }
 
 void App::handleTouchEnded(const sapp_event* ev) {
-    if (screen_ == Screen::Menu || screen_ == Screen::Join || screen_ == Screen::Catalog || screen_ == Screen::Paused) {
-        hudDown_ = false;
-    }
+    refreshDownTouches(ev, true);
     for (int i = 0; i < ev->num_touches; ++i) {
         const sapp_touchpoint& touch = ev->touches[i];
         if (!touch.changed) continue;
-        if (touch.identifier == stickTouch_) {
-            stickTouch_ = 0;
-            stickDX_ = 0.0f;
-            stickDY_ = 0.0f;
-        } else if (touch.identifier == lookTouch_) {
-            lookTouch_ = 0;
-        }
+        controls_.end(static_cast<TouchId>(touch.identifier));
     }
-    // отпускание кнопок действий: если ни один палец не на кнопке — сбрасываем
-    bool anyOnBreak = false;
-    bool anyOnPlace = false;
-    const TouchLayout& layout = hud_.layout(screenWidth_, screenHeight_);
-    for (int i = 0; i < ev->num_touches; ++i) {
-        const sapp_touchpoint& touch = ev->touches[i];
-        if (touch.changed) continue;
-        if (layout.breakBlock.contains(touch.pos_x, touch.pos_y)) anyOnBreak = true;
-        if (layout.placeBlock.contains(touch.pos_x, touch.pos_y)) anyOnPlace = true;
-    }
-    if (!anyOnBreak) breakHeld_ = false;
-    if (!anyOnPlace) placeHeld_ = false;
+    // после снятия пальца синхронизируемся с реально нажатыми: так кнопки не залипают
+    controls_.syncDown(downTouches_);
+    if (touchMode_ || screen_ != Screen::Playing) hudDown_ = !downTouches_.empty();
 }
 
 void App::onEvent(const sapp_event* ev) {
@@ -886,11 +1012,13 @@ void App::onEvent(const sapp_event* ev) {
                     break;
                 }
                 if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) {
-                    breakHeld_ = true;
+                    mouseBreakHeld_ = true;
                     breakCooldown_ = 0.0f;
                 } else if (ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT) {
-                    placeHeld_ = true;
+                    mousePlaceHeld_ = true;
                     placeCooldown_ = 0.0f;
+                } else if (ev->mouse_button == SAPP_MOUSEBUTTON_MIDDLE) {
+                    pickBlock(true);
                 } else {
                     triggerExplosion();
                 }
@@ -901,8 +1029,8 @@ void App::onEvent(const sapp_event* ev) {
             break;
         }
         case SAPP_EVENTTYPE_MOUSE_UP: {
-            if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) breakHeld_ = false;
-            if (ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT) placeHeld_ = false;
+            if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT) mouseBreakHeld_ = false;
+            if (ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT) mousePlaceHeld_ = false;
             hudDown_ = false;
             break;
         }
@@ -920,6 +1048,15 @@ void App::onEvent(const sapp_event* ev) {
         case SAPP_EVENTTYPE_TOUCHES_ENDED:
         case SAPP_EVENTTYPE_TOUCHES_CANCELLED:
             handleTouchEnded(ev);
+            break;
+        case SAPP_EVENTTYPE_UNFOCUSED:
+        case SAPP_EVENTTYPE_ICONIFIED:
+            // на телефоне свёрнутое приложение не присылает KEY_UP/TOUCHES_ENDED
+            for (bool& key : keys_) key = false;
+            controls_.reset();
+            downTouches_.clear();
+            mouseBreakHeld_ = false;
+            mousePlaceHeld_ = false;
             break;
         case SAPP_EVENTTYPE_RESIZED:
             screenWidth_ = ev->window_width;

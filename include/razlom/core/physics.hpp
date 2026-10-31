@@ -32,12 +32,58 @@ inline bool collidesAt(const World& world, const Vec3& feet) {
     for (int y = y0; y <= y1; ++y)
         for (int z = z0; z <= z1; ++z)
             for (int x = x0; x <= x1; ++x) {
-                if (!World::inBounds(x, y, z)) {
-                    if (y < 0) return true;
-                    continue;
-                }
+                // За границей мира геометрии нет вообще: если считать её пустотой,
+                // игрок уходит в бесконечность и «мир пропадает» (видно только небо).
+                // Поэтому всё, что вне коробки мира, — твёрдое: пол, потолок, стены.
+                if (!World::inBounds(x, y, z)) return true;
                 if (isSolidBlock(world.get(x, y, z))) return true;
             }
+    return false;
+}
+
+// Держим игрока внутри мира. Даже если он «телепортировался» правкой мира или
+// сервер прислал позицию с края, камера не улетит за пределы геометрии.
+inline Vec3 clampToWorld(const Vec3& pos) {
+    const float marginXZ = kPlayerHalfWidth + 1e-3f;
+    const float maxY = static_cast<float>(World::kSizeY) - kPlayerHeight - 1e-3f;
+    Vec3 p = pos;
+    p.x = clampf(p.x, marginXZ, static_cast<float>(World::kSizeX) - marginXZ);
+    p.z = clampf(p.z, marginXZ, static_cast<float>(World::kSizeZ) - marginXZ);
+    p.y = clampf(p.y, 0.0f, maxY);
+    return p;
+}
+
+// Точка внутри твёрдого блока: камера в породе видна как «пустой мир», потому
+// что все грани смотрят наружу и отсекаются. Такое положение надо чинить.
+inline bool pointInsideSolid(const World& world, const Vec3& p) {
+    const int x = static_cast<int>(std::floor(p.x));
+    const int y = static_cast<int>(std::floor(p.y));
+    const int z = static_cast<int>(std::floor(p.z));
+    if (!World::inBounds(x, y, z)) return true;
+    return isSolidBlock(world.get(x, y, z));
+}
+
+// Ищем ближайшее свободное место для игрока: вверх до 12 блоков, затем вниз.
+// Возвращает false, если места нет вовсе (тогда вызывающий отправит на спавн).
+inline bool findFreeSpot(const World& world, const Vec3& from, Vec3& out) {
+    const float base = std::floor(from.y);
+    for (int up = 1; up <= 12; ++up) {
+        Vec3 p = from;
+        p.y = base + static_cast<float>(up);
+        if (!collidesAt(world, p)) {
+            out = p;
+            return true;
+        }
+    }
+    for (int down = 1; down <= 12; ++down) {
+        Vec3 p = from;
+        p.y = base - static_cast<float>(down);
+        if (p.y < 0.0f) break;
+        if (!collidesAt(world, p)) {
+            out = p;
+            return true;
+        }
+    }
     return false;
 }
 
