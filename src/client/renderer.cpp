@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -20,6 +21,7 @@ struct WorldParams {
     float wave[4];
 };
 
+
 constexpr uint8_t kFaceShade3D[6] = {205, 190, 255, 130, 225, 175};
 
 constexpr int kCubeFaces[6][4][3] = {
@@ -32,13 +34,13 @@ constexpr int kCubeFaces[6][4][3] = {
 };
 
 void pushCube(std::vector<Vertex3D>& out, const Vec3& min, const Vec3& max, uint8_t r, uint8_t g, uint8_t b,
-              uint8_t a, float sizeScale = 1.0f) {
+              uint8_t a, float sizeScale = 1.0f, const uint8_t* faceShade = kFaceShade3D) {
     const Vec3 center = (min + max) * 0.5f;
     const Vec3 half = (max - min) * 0.5f * sizeScale;
     const Vec3 lo = center - half;
     const Vec3 hi = center + half;
     for (int face = 0; face < 6; ++face) {
-        const int shade = kFaceShade3D[face];
+        const int shade = faceShade[face];
         const uint8_t col[4] = {static_cast<uint8_t>(r * shade / 255), static_cast<uint8_t>(g * shade / 255),
                                 static_cast<uint8_t>(b * shade / 255), a};
         Vertex3D quad[4];
@@ -68,19 +70,10 @@ sg_blend_state alphaBlend() {
     return b;
 }
 
-AABB chunkBounds(int chunkIndex) {
-    int x = 0, y = 0, z = 0;
-    World::chunkOrigin(chunkIndex, x, y, z);
-    return AABB{Vec3{static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)},
-                Vec3{static_cast<float>(x + kChunkSize), static_cast<float>(y + kChunkSize),
-                     static_cast<float>(z + kChunkSize)}};
-}
-
 }  // namespace
 
 bool Renderer::init() {
     chunks_.assign(World::kChunkCount, ChunkGpu{});
-    for (int i = 0; i < World::kChunkCount; ++i) chunks_[static_cast<size_t>(i)].bounds = chunkBounds(i);
     dynamicVertices_.reserve(16384);
 
     if (!initShaders()) return false;
@@ -105,6 +98,8 @@ bool Renderer::init() {
         skyBuffer_ = sg_make_buffer(desc);
         skyCapacity_ = sizeof(sky);
     }
+
+    buildClouds();
 
     // Буферы интерфейса и динамической геометрии создаются один раз:
     // пересоздание ресурсов в кадре — лишний риск на мобильных драйверах.
@@ -178,7 +173,7 @@ bool Renderer::initShaders() {
     auto glsl = [&](const char* body) { return header + body; };
 
     auto makeShader = [](const char* vs, const char* fs, const char* label, bool worldUniforms, bool uiUniforms,
-                         bool textured) {
+                         bool textured, bool skyUniforms = false) {
         sg_shader_desc desc{};
         desc.vertex_func.source = vs;
         desc.fragment_func.source = fs;
@@ -229,6 +224,26 @@ bool Renderer::initShaders() {
             ub.glsl_uniforms[2].glsl_name = shaders::kWorldUniformNames[2];
         }
 
+        // Небо: горизонт и солнце считаются на CPU и приходят во фрагментный
+        // шейдер обычными (не блочными) юниформами — именованный блок в GL
+        // ненадёжен, обычные юниформы собираются предсказуемо.
+        if (skyUniforms) {
+            // Раскладка std140: два vec4, второй по смещению 16, размер кратен 16.
+            static_assert(sizeof(SkyParams) == 32, "SkyParams: ровно два vec4");
+            static_assert(offsetof(SkyParams, sun) == 16, "sun идёт сразу после horizon");
+            sg_shader_uniform_block& ub = desc.uniform_blocks[0];
+            ub.stage = SG_SHADERSTAGE_FRAGMENT;
+            ub.size = sizeof(SkyParams);
+            ub.layout = SG_UNIFORMLAYOUT_STD140;
+            ub.hlsl_register_b_n = 0;
+            ub.glsl_uniforms[0].type = SG_UNIFORMTYPE_FLOAT4;
+            ub.glsl_uniforms[0].array_count = 0;
+            ub.glsl_uniforms[0].glsl_name = "horizon";
+            ub.glsl_uniforms[1].type = SG_UNIFORMTYPE_FLOAT4;
+            ub.glsl_uniforms[1].array_count = 0;
+            ub.glsl_uniforms[1].glsl_name = "sun";
+        }
+
         if (textured) {
             desc.views[0].texture.stage = SG_SHADERSTAGE_FRAGMENT;
             desc.views[0].texture.image_type = SG_IMAGETYPE_2D;
@@ -260,7 +275,7 @@ bool Renderer::initShaders() {
     waterShader_ = sg_make_shader(waterDesc);
     sg_shader_desc uiDesc = makeShader(uiVs.c_str(), uiFs.c_str(), "razlom-ui", false, true, true);
     uiShader_ = sg_make_shader(uiDesc);
-    sg_shader_desc skyDesc = makeShader(skyVs.c_str(), skyFs.c_str(), "razlom-sky", false, false, false);
+    sg_shader_desc skyDesc = makeShader(skyVs.c_str(), skyFs.c_str(), "razlom-sky", false, false, false, true);
     skyShader_ = sg_make_shader(skyDesc);
 
     if (sg_query_shader_state(worldShader_) != SG_RESOURCESTATE_VALID ||
@@ -416,6 +431,9 @@ void Renderer::shutdown() {
     if (worldShader_.id != 0) sg_destroy_shader(worldShader_);
     if (waterShader_.id != 0) sg_destroy_shader(waterShader_);
     if (uiShader_.id != 0) sg_destroy_shader(uiShader_);
+    if (cloudBuffer_.id != 0) sg_destroy_buffer(cloudBuffer_);
+    cloudBuffer_ = {};
+    cloudVertices_ = 0;
     if (skyShader_.id != 0) sg_destroy_shader(skyShader_);
     skyBuffer_ = {};
     uiBuffer_ = {};
@@ -444,6 +462,59 @@ void Renderer::resetWorld(World& world) {
         c = ChunkGpu{};
     }
     world.markAllChunksDirty();
+}
+
+void Renderer::buildClouds() {
+    // Геометрия облаков общая с превью и тестами (core/clouds.hpp).
+    std::vector<MeshVertex> mesh;
+    buildCloudMesh(mesh);
+    std::vector<Vertex3D> verts;
+    verts.reserve(mesh.size());
+    for (const MeshVertex& v : mesh) {
+        Vertex3D out{};
+        out.x = v.x;
+        out.y = v.y;
+        out.z = v.z;
+        out.r = v.r;
+        out.g = v.g;
+        out.b = v.b;
+        out.a = v.a;
+        verts.push_back(out);
+    }
+    cloudVertices_ = static_cast<int>(verts.size());
+    if (verts.empty()) return;
+    sg_buffer_desc desc{};
+    desc.usage.vertex_buffer = true;
+    desc.size = verts.size() * sizeof(Vertex3D);
+    desc.data = sg_range{verts.data(), desc.size};
+    desc.label = "razlom-clouds";
+    cloudBuffer_ = sg_make_buffer(desc);
+}
+
+void Renderer::rebuildWorld(const World& world, int immediateChunks) {
+    // Полный сброс GPU-геометрии: используется, если кадр оказался пустым.
+    for (ChunkGpu& c : chunks_) {
+        if (c.opaque.id != 0) sg_destroy_buffer(c.opaque);
+        if (c.water.id != 0) sg_destroy_buffer(c.water);
+        c = ChunkGpu{};
+    }
+    const_cast<World&>(world).markAllChunksDirty();
+    if (immediateChunks > 0) buildChunks(world, immediateChunks);
+}
+
+Renderer::SkyParams Renderer::skyParamsFor(const FrameData& frame) const {
+    const float aspect = static_cast<float>(width_ > 0 ? width_ : 16) /
+                         static_cast<float>(height_ > 0 ? height_ : 9);
+    const Camera& cam = frame.camera;
+    const SkyLook look = computeSkyLook(cam.yaw, cam.pitch, cam.fovDegrees, aspect, frame.sunDirection);
+    SkyParams p{};
+    p.horizon[0] = look.horizonY;
+    p.horizon[1] = kSkySoftness;
+    p.sun[0] = look.sunX;
+    p.sun[1] = look.sunY;
+    p.sun[2] = kSunRadiusNdc;
+    p.sun[3] = look.sunVisible;
+    return p;
 }
 
 void Renderer::uploadChunk(int chunkIndex, const ChunkMesh& mesh) {
@@ -547,15 +618,33 @@ void Renderer::buildDynamicGeometry(const FrameData& frame) {
 Mat4 Renderer::viewProjection(const FrameData& frame) const {
     const Camera& cam = frame.camera;
     const Mat4 view = Mat4::lookAt(cam.position, cam.position + cam.forward(), Vec3{0.0f, 1.0f, 0.0f});
-    const float aspect = height_ > 0 ? static_cast<float>(width_) / static_cast<float>(height_) : 1.0f;
-    const Mat4 proj = Mat4::perspective(radians(cam.fovDegrees), aspect, 0.08f, 260.0f);
+    // aspect защищён от нулевого/вырожденного размера кадра: иначе проекция
+    // получает inf/NaN и весь мир исчезает из кадра (сплошное небо).
+    const float rawAspect = height_ > 0 ? static_cast<float>(width_) / static_cast<float>(height_) : 1.0f;
+    const float aspect = std::clamp(rawAspect, 0.2f, 8.0f);
+    const float fov = std::clamp(cam.fovDegrees, 35.0f, 110.0f);
+    const Mat4 proj = Mat4::perspective(radians(fov), aspect, 0.08f, 260.0f);
     return proj * view;
 }
 
 void Renderer::render(const FrameData& frame) {
+    // Кадр нулевого размера (свёрнутое окно, смена ориентации) рисовать нельзя:
+    // вырожденный swapchain даёт пустую картинку и лишние ошибки бэкенда.
+    if (width_ <= 0 || height_ <= 0) return;
+
     drawCalls_ = 0;
     visibleChunks_ = 0;
+    worldDraws_ = 0;
     remeshedThisFrame_ = 0;
+
+    // Страховка от «голубого экрана»: если в прошлом кадре чанки проходили
+    // фрустум, но ни один вызов отрисовки не ушёл (битые/потерянные GPU-буферы),
+    // пересобираем геометрию целиком до начала пасса.
+    if (frame.world && worldFailStreak_ >= 2) {
+        rebuildWorld(*frame.world, 96);
+        ++autoRebuilds_;
+        worldFailStreak_ = 0;
+    }
 
     if (frame.world) remeshedThisFrame_ = buildChunks(*frame.world, frame.maxRemesh);
     buildDynamicGeometry(frame);
@@ -574,7 +663,9 @@ void Renderer::render(const FrameData& frame) {
 
     // --- 1. небо ---
     if (frame.showSky && skyBuffer_.id != 0 && skyPipeline_.id != 0) {
+        const SkyParams sky = skyParamsFor(frame);
         sg_apply_pipeline(skyPipeline_);
+        sg_apply_uniforms(0, sg_range{&sky, sizeof(sky)});
         sg_bindings bind{};
         bind.vertex_buffers[0] = skyBuffer_;
         sg_apply_bindings(&bind);
@@ -604,12 +695,14 @@ void Renderer::render(const FrameData& frame) {
         for (int i = 0; i < World::kChunkCount; ++i) {
             const ChunkGpu& c = chunks_[static_cast<size_t>(i)];
             if (!c.valid || c.opaqueVertices == 0) continue;
-            if (!frustum.intersects(c.bounds)) continue;
+            if (!frustum.intersects(chunkBounds(i))) continue;
             ++visibleChunks_;
+            if (sg_query_buffer_state(c.opaque) != SG_RESOURCESTATE_VALID) continue;
             bind.vertex_buffers[0] = c.opaque;
             sg_apply_bindings(&bind);
             sg_draw(0, c.opaqueVertices, 1);
             ++drawCalls_;
+            ++worldDraws_;
         }
 
         // --- 3. вода ---
@@ -618,12 +711,26 @@ void Renderer::render(const FrameData& frame) {
         for (int i = 0; i < World::kChunkCount; ++i) {
             const ChunkGpu& c = chunks_[static_cast<size_t>(i)];
             if (!c.valid || c.waterVertices == 0) continue;
-            if (!frustum.intersects(c.bounds)) continue;
+            if (!frustum.intersects(chunkBounds(i))) continue;
+            if (sg_query_buffer_state(c.water) != SG_RESOURCESTATE_VALID) continue;
             bind.vertex_buffers[0] = c.water;
             sg_apply_bindings(&bind);
             sg_draw(0, c.waterVertices, 1);
             ++drawCalls_;
         }
+
+        // --- 3b. облака: тот же непрозрачный конвейер, статичная геометрия ---
+        if (cloudBuffer_.id != 0 && cloudVertices_ > 0) {
+            sg_bindings cloudBind{};
+            cloudBind.vertex_buffers[0] = cloudBuffer_;
+            sg_apply_bindings(&cloudBind);
+            sg_draw(0, cloudVertices_, 1);
+            ++drawCalls_;
+        }
+
+        // Диагностика «пустого мира»: чанки в кадре есть, а вызовов нет.
+        if (visibleChunks_ > 0 && worldDraws_ == 0) ++worldFailStreak_;
+        else worldFailStreak_ = 0;
     }
 
     // --- 4. обломки и игроки ---

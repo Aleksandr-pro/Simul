@@ -116,18 +116,46 @@ inline constexpr int kWorldUniformCount = 3;
     inline constexpr const char* kSkyVsGlsl = R"(
     in vec2 position;
     in vec4 color;
+    out vec2 v_pos;
     out vec4 v_color;
     void main() {
-        gl_Position = vec4(position, 1.0, 1.0);
+        v_pos = position;
         v_color = color;
+        gl_Position = vec4(position, 1.0, 1.0);
     }
     )";
 
+    // Небо рисуется первым кадром всегда: даже если мир по какой-то причине
+    // не дал ни одного чанка, игрок видит небо с солнцем, а не пустую заливку.
     inline constexpr const char* kSkyFsGlsl = R"(
+    uniform vec4 horizon;  // x — NDC-высота горизонта, y — мягкость, z/w — резерв
+    uniform vec4 sun;      // xy — центр диска в NDC, z — радиус, w — видимость 0..1
+
+    in vec2 v_pos;
     in vec4 v_color;
     out vec4 frag_color;
+
     void main() {
-        frag_color = v_color;
+        const vec3 zenith = vec3(0.20, 0.47, 0.85);
+        const vec3 midSky = vec3(0.45, 0.71, 0.95);
+        vec3 horizonColor = vec3(0.81, 0.90, 0.99) * mix(vec3(1.0), v_color.rgb, 0.15);
+
+        float soft = max(horizon.y, 0.05);
+        float h = v_pos.y - horizon.x;
+        float up = clamp(h / soft, 0.0, 1.0);
+        float down = clamp(-h / (soft * 0.75), 0.0, 1.0);
+        vec3 col = mix(horizonColor, midSky, up);
+        col = mix(col, zenith, clamp((up - 0.30) / 0.70, 0.0, 1.0));
+        col = mix(col, horizonColor * 0.90, down * 0.65);
+
+        if (sun.w > 0.001) {
+            float d = length(v_pos - sun.xy);
+            float radius = max(sun.z, 0.01);
+            float disc = 1.0 - smoothstep(radius * 0.55, radius, d);
+            float glow = exp(-d * 2.4) * 0.32;
+            col += vec3(1.0, 0.95, 0.78) * (disc * 0.85 + glow) * sun.w;
+        }
+        frag_color = vec4(col, 1.0);
     }
     )";
 
@@ -253,23 +281,47 @@ inline constexpr int kWorldUniformCount = 3;
     };
     struct vs_out {
         float4 pos : SV_Position;
+        float2 uv : TEXCOORD0;
         float4 color : COLOR0;
     };
     vs_out main(vs_in inp) {
         vs_out o;
         o.pos = float4(inp.position, 1.0, 1.0);
+        o.uv = inp.position;
         o.color = inp.color;
         return o;
     }
     )";
 
     inline constexpr const char* kSkyFsHlsl = R"(
+    cbuffer fs_params : register(b0) {
+        float4 horizon;
+        float4 sun;
+    };
     struct fs_in {
         float4 pos : SV_Position;
+        float2 uv : TEXCOORD0;
         float4 color : COLOR0;
     };
     float4 main(fs_in inp) : SV_Target {
-        return inp.color;
+        const float3 zenith = float3(0.20, 0.47, 0.85);
+        const float3 midSky = float3(0.45, 0.71, 0.95);
+        float3 horizonColor = float3(0.81, 0.90, 0.99) * lerp(float3(1.0, 1.0, 1.0), inp.color.rgb, 0.15);
+        float soft = max(horizon.y, 0.05);
+        float h = inp.uv.y - horizon.x;
+        float up = saturate(h / soft);
+        float down = saturate(-h / (soft * 0.75));
+        float3 col = lerp(horizonColor, midSky, up);
+        col = lerp(col, zenith, saturate((up - 0.30) / 0.70));
+        col = lerp(col, horizonColor * 0.90, down * 0.65);
+        if (sun.w > 0.001) {
+            float d = length(inp.uv - sun.xy);
+            float radius = max(sun.z, 0.01);
+            float disc = 1.0 - smoothstep(radius * 0.55, radius, d);
+            float glow = exp(-d * 2.4) * 0.32;
+            col += float3(1.0, 0.95, 0.78) * (disc * 0.85 + glow) * sun.w;
+        }
+        return float4(col, 1.0);
     }
     )";
 

@@ -38,6 +38,9 @@ jobs:
       - name: Автотесты управления (владение пальцами, стик, залипания)
         run: ./build/razlom_controls_tests
 
+      - name: Автотесты кадра (небо, облака, сторож мира)
+        run: ./build/razlom_frame_tests
+
       - name: CPU-превью кадров (без GPU)
         run: |
           mkdir -p preview

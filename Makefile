@@ -79,11 +79,19 @@ $(BUILD)/razlom_controls_tests: tests/test_controls.cpp include/razlom/client/co
 	@mkdir -p $(BUILD)/tests
 	$(CXX) $(CXXFLAGS) tests/test_controls.cpp -o $@
 
-test: $(BUILD)/razlom_tests $(BUILD)/razlom_ui_tests $(BUILD)/razlom_shader_tests $(BUILD)/razlom_controls_tests
+# Кадр: небо, облака и сторож мира («голубой экран» не должен появляться).
+$(BUILD)/razlom_frame_tests: tests/test_frame.cpp include/razlom/client/sky.hpp \
+		include/razlom/client/worldguard.hpp include/razlom/core/clouds.hpp
+	@mkdir -p $(BUILD)/tests
+	$(CXX) $(CXXFLAGS) tests/test_frame.cpp src/core/world.cpp src/core/worldgen.cpp -o $@
+
+test: $(BUILD)/razlom_tests $(BUILD)/razlom_ui_tests $(BUILD)/razlom_shader_tests $(BUILD)/razlom_controls_tests \
+		$(BUILD)/razlom_frame_tests
 	./$(BUILD)/razlom_tests
 	./$(BUILD)/razlom_ui_tests
 	./$(BUILD)/razlom_shader_tests
 	./$(BUILD)/razlom_controls_tests
+	./$(BUILD)/razlom_frame_tests
 
 bench: $(BUILD)/razlom_bench
 	./$(BUILD)/razlom_bench

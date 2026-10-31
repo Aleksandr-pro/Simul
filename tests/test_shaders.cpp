@@ -87,6 +87,24 @@ TEST(shader_glsl_attributes_match_desc) {
     CHECK(has(skyVs, "in vec4 color;"));
 }
 
+// Небо: горизонт и солнце — обычные vec4-юниформы во фрагментном шейдере.
+// Имена обязаны в точности совпадать с sg_shader_desc в renderer.cpp.
+TEST(shader_sky_uses_plain_uniforms) {
+    const std::string fs(kSkyFsGlsl);
+    checkNoUniformBlock("sky fs", kSkyFsGlsl);
+    CHECK(has(fs, "uniform vec4 horizon;"));
+    CHECK(has(fs, "uniform vec4 sun;"));
+    CHECK_EQ(countOf(fs, "uniform vec4 horizon;"), 1);
+    CHECK_EQ(countOf(fs, "uniform vec4 sun;"), 1);
+    // Шейдер обязан рисовать градиент и солнце, а не одну заливку цветом вершины
+    CHECK(has(fs, "mix("));
+    CHECK(has(fs, "smoothstep("));
+    CHECK(has(fs, "v_pos"));
+    // Вершинный шейдер передаёт позицию как varying, иначе градиента не будет
+    CHECK(has(std::string(kSkyVsGlsl), "out vec2 v_pos;"));
+    CHECK(has(std::string(kSkyVsGlsl), "v_pos = position;"));
+}
+
 // У HLSL (D3D11) всё наоборот: там настоящий cbuffer, и он должен остаться.
 // Имена из sg_shader_desc обязаны встречаться в GLSL как объявления uniform'ов:
 // иначе sokol не найдёт location и молча оставит значение нулевым.
@@ -112,6 +130,12 @@ TEST(shader_hlsl_world_keeps_cbuffer) {
     CHECK(has(worldVs, "float4x4 mvp;"));
     CHECK(has(std::string(kWaterVsHlsl), "cbuffer vs_params : register(b0)"));
     CHECK(has(std::string(kWorldFsHlsl), "SV_Target"));
+    // Небо в HLSL: те же два float4 в cbuffer фрагментного шейдера
+    const std::string skyFs(kSkyFsHlsl);
+    CHECK(has(skyFs, "cbuffer fs_params : register(b0)"));
+    CHECK(has(skyFs, "float4 horizon;"));
+    CHECK(has(skyFs, "float4 sun;"));
+    CHECK(has(std::string(kSkyVsHlsl), "float2 uv : TEXCOORD0;"));
     CHECK(has(std::string(kUiFsHlsl), "SV_Target"));
 }
 

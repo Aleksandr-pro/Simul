@@ -9,6 +9,7 @@
 #include "razlom/client/controls.hpp"
 #include "razlom/client/font.hpp"
 #include "razlom/client/hud.hpp"
+#include "razlom/client/worldguard.hpp"
 #include "razlom/client/renderer.hpp"
 #include "razlom/core/session.hpp"
 #include "razlom/core/world.hpp"
@@ -71,6 +72,11 @@ private:
     void toggleFlight();
     void pickBlock(bool toSlot);
     void fixStuckPlayer();
+    // Сторож кадра: если мир «пропал» из кадра — пересобрать геометрию,
+    // затем вернуть камеру к спавну. Гарантия, что голубого экрана не будет.
+    void watchWorldFrame(float dt);
+    void respawnCamera(const char* reason);
+    bool sanitizeCamera();
     bool isEditingText() const { return screen_ == Screen::Join; }
 
     Renderer renderer_;
@@ -123,7 +129,8 @@ private:
     std::vector<TouchId> downTouches_;
     bool jumpRequested_ = false;
     float spaceTapTimer_ = 1.0f;   // время с прошлого нажатия пробела (двойной тап = полёт)
-    float emptyFrameTimer_ = 0.0f;  // сколько секунд подряд в кадре нет ни одного чанка
+    WorldWatch watch_;  // сторож кадра: мир не может «пропасть» навсегда
+    float fov_ = 74.0f;             // плавно меняющийся угол обзора (бег/полёт)
     bool sprintHeld_ = false;
 
     // ввод действий: эффективные значения собираются из мыши и сенсора

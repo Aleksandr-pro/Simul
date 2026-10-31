@@ -8,6 +8,9 @@
 #include "razlom/core/math.hpp"
 #include "razlom/core/mesher.hpp"
 #include "razlom/core/session.hpp"
+#include "razlom/client/sky.hpp"
+#include "razlom/core/chunks.hpp"
+#include "razlom/core/clouds.hpp"
 #include "razlom/core/world.hpp"
 #include "sokol_gfx.h"
 
@@ -19,15 +22,9 @@ struct Camera {
     float pitch = 0.0f;
     float fovDegrees = 72.0f;
 
-    Vec3 forward() const {
-        const float cp = std::cos(pitch);
-        return Vec3{-std::sin(yaw) * cp, std::sin(pitch), -std::cos(yaw) * cp}.normalized();
-    }
-    Vec3 right() const {
-        const Vec3 f = forward();
-        return cross(f, Vec3{0.0f, 1.0f, 0.0f}).normalized();
-    }
-    Vec3 up() const { return cross(right(), forward()); }
+    Vec3 forward() const { return cameraForward(yaw, pitch); }
+    Vec3 right() const { return cameraRight(yaw, pitch); }
+    Vec3 up() const { return cameraUp(yaw, pitch); }
 };
 
 struct UiVertex {
@@ -55,7 +52,7 @@ struct FrameData {
     float time = 0.0f;
     int maxRemesh = 6;
     bool showSky = true;
-    Vec3 sunDirection{0.35f, 0.82f, 0.45f};
+    Vec3 sunDirection = client::kDefaultSunDirection;
 };
 
 class Renderer {
@@ -85,6 +82,14 @@ public:
     const std::string& lastError() const { return error_; }
     int drawCalls() const { return drawCalls_; }
     int visibleChunks() const { return visibleChunks_; }
+    // Сколько чанков реально ушло в отрисовку в прошлом кадре. Ноль при
+    // ненулевом visibleChunks() — признак битых GPU-буферов.
+    int worldDraws() const { return worldDraws_; }
+    // Сколько раз рендерер сам пересобирал чанки после «пустого» кадра.
+    int autoRebuilds() const { return autoRebuilds_; }
+    // Полная пересборка геометрии мира: используется сторожем приложения,
+    // если кадр оказался пустым (мир «пропал»).
+    void rebuildWorld(const World& world, int immediateChunks = 64);
     static constexpr int kFontAtlasSize = 512;
     // Фиксированные буферы кадра: создаются один раз, без пересоздания в кадре.
     static constexpr size_t kMaxUiVertices = 32768;
@@ -97,12 +102,17 @@ private:
         int opaqueVertices = 0;
         int waterVertices = 0;
         bool valid = false;
-        AABB bounds;
     };
 
+    struct SkyParams {
+        float horizon[4] = {0.0f, 0.9f, 0.0f, 0.0f};
+        float sun[4] = {2.0f, 2.0f, 0.08f, 0.0f};
+    };
+    SkyParams skyParamsFor(const FrameData& frame) const;
     bool initShaders();
     void initFontPlaceholder();
     bool initPipelines();
+    void buildClouds();
     void uploadChunk(int chunkIndex, const ChunkMesh& mesh);
     void buildDynamicGeometry(const FrameData& frame);
     void drawWorld(const FrameData& frame);
@@ -114,6 +124,9 @@ private:
     int height_ = 720;
     int drawCalls_ = 0;
     int visibleChunks_ = 0;
+    int worldDraws_ = 0;
+    int worldFailStreak_ = 0;
+    int autoRebuilds_ = 0;
     int remeshedThisFrame_ = 0;
     std::string error_;
 
@@ -132,6 +145,8 @@ private:
     sg_pipeline skyPipeline_{};
 
     sg_buffer skyBuffer_{};
+    sg_buffer cloudBuffer_{};
+    int cloudVertices_ = 0;
     sg_buffer uiBuffer_{};
     size_t uiCapacity_ = 0;
     size_t skyCapacity_ = 0;
