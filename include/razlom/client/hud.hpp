@@ -102,11 +102,19 @@ struct HudModel {
     std::string toast;
     float toastTimer = 0.0f;
     bool showTouch = false;
+    // состояние управления для подсветки кнопок
+    bool flying = false;
+    bool breakActive = false;
+    bool placeActive = false;
+    bool jumpActive = false;
+    float stickDX = 0.0f;  // положение стика для отрисовки (-1..1)
+    float stickDY = 0.0f;
 };
 
 // Раскладка сенсорных элементов (одна и та же для отрисовки и для попаданий).
 struct TouchLayout {
     Rect stick;
+    Rect pause;
     Rect jump;
     Rect breakBlock;
     Rect placeBlock;
@@ -116,6 +124,25 @@ struct TouchLayout {
     Rect hotbar[9];
     Rect slot(Rect r) const { return r; }
 };
+
+// Геометрия кружка стика: одна формула и для отрисовки, и для тестов —
+// кружок никогда не вылезает за область стика, даже если палец ушёл за край.
+struct StickKnob {
+    float x = 0.0f;
+    float y = 0.0f;
+    float size = 0.0f;
+};
+
+inline StickKnob stickKnobFor(const Rect& stick, float dx, float dy, float scale) {
+    StickKnob k;
+    k.size = 74.0f * scale;
+    const float travel = stick.w * 0.5f - k.size * 0.5f;
+    const float cx = stick.cx() + (dx < -1.0f ? -1.0f : (dx > 1.0f ? 1.0f : dx)) * travel;
+    const float cy = stick.cy() - (dy < -1.0f ? -1.0f : (dy > 1.0f ? 1.0f : dy)) * travel;
+    k.x = cx - k.size * 0.5f;
+    k.y = cy - k.size * 0.5f;
+    return k;
+}
 
 class Hud {
 public:
@@ -159,6 +186,7 @@ private:
     bool touchLayoutValid_ = false;
     int touchLayoutW_ = 0;
     int touchLayoutH_ = 0;
+    float touchLayoutScale_ = -1.0f;
 };
 
 }  // namespace razlom::client

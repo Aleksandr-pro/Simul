@@ -74,10 +74,16 @@ $(BUILD)/razlom_shader_tests: tests/test_shaders.cpp include/razlom/client/shade
 	@mkdir -p $(BUILD)/tests
 	$(CXX) $(CXXFLAGS) tests/test_shaders.cpp -o $@
 
-test: $(BUILD)/razlom_tests $(BUILD)/razlom_ui_tests $(BUILD)/razlom_shader_tests
+# Сенсорное управление: владение пальцами, дедзона стика, страховка от залипаний.
+$(BUILD)/razlom_controls_tests: tests/test_controls.cpp include/razlom/client/controls.hpp
+	@mkdir -p $(BUILD)/tests
+	$(CXX) $(CXXFLAGS) tests/test_controls.cpp -o $@
+
+test: $(BUILD)/razlom_tests $(BUILD)/razlom_ui_tests $(BUILD)/razlom_shader_tests $(BUILD)/razlom_controls_tests
 	./$(BUILD)/razlom_tests
 	./$(BUILD)/razlom_ui_tests
 	./$(BUILD)/razlom_shader_tests
+	./$(BUILD)/razlom_controls_tests
 
 bench: $(BUILD)/razlom_bench
 	./$(BUILD)/razlom_bench

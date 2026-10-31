@@ -120,9 +120,14 @@ bool Hud::button(const HudInput& input, Rect r, const std::string& label, bool p
 }
 
 const TouchLayout& Hud::layout(int width, int height) {
-    if (touchLayoutValid_ && touchLayoutW_ == width && touchLayoutH_ == height) return touch_;
+    // раскладка зависит не только от размера, но и от scale_: без этого кэш,
+    // посчитанный до первого кадра, отдавал бы кнопки с чужим масштабом
+    if (touchLayoutValid_ && touchLayoutW_ == width && touchLayoutH_ == height &&
+        touchLayoutScale_ == scale_)
+        return touch_;
     touchLayoutW_ = width;
     touchLayoutH_ = height;
+    touchLayoutScale_ = scale_;
     touchLayoutValid_ = true;
 
     const float s = scale_;
@@ -146,6 +151,10 @@ const TouchLayout& Hud::layout(int width, int height) {
     touch_.explode = Rect{col1, row1, btn, btn};
     touch_.fly = Rect{col0, row2, btn, btn};
     touch_.attack = Rect{col1, row2, btn, btn};
+
+    // кнопка паузы сверху по центру: её же использует обработчик касаний
+    const float pauseSize = 46.0f * s;
+    touch_.pause = Rect{w * 0.5f - pauseSize * 0.5f, 12.0f * s, pauseSize, pauseSize};
 
     const float slotSize = 52.0f * s;
     const float gap = 6.0f * s;
@@ -444,8 +453,7 @@ void Hud::drawPlaying(const HudModel& model, const HudInput& input, HudResult& r
     if (model.showTouch) drawTouchControls(model, input);
 
     // --- пауза (доступна и на телефоне) ---
-    const float pauseSize = 46.0f * s;
-    const Rect pauseRect{w * 0.5f - pauseSize * 0.5f, 12.0f * s, pauseSize, pauseSize};
+    const Rect pauseRect = tl.pause;
     rect(pauseRect.x, pauseRect.y, pauseRect.w, pauseRect.h, 16, 20, 30, 190);
     rectOutline(pauseRect.x, pauseRect.y, pauseRect.w, pauseRect.h, 200, 210, 230, 150, 1.5f);
     rect(pauseRect.cx() - 8.0f * s, pauseRect.cy() - 9.0f * s, 5.0f * s, 18.0f * s, 230, 236, 245, 235);
@@ -482,12 +490,12 @@ void Hud::drawPlaying(const HudModel& model, const HudInput& input, HudResult& r
 }
 
 void Hud::drawTouchControls(const HudModel& model, const HudInput& input) {
-    (void)model;
     const float s = scale_;
     const TouchLayout& tl = layout(width_, height_);
 
-    auto padButton = [&](const Rect& r, const std::string& label, uint8_t cr, uint8_t cg, uint8_t cb) {
-        const bool active = r.contains(input.mouseX, input.mouseY) && input.down;
+    auto padButton = [&](const Rect& r, const std::string& label, uint8_t cr, uint8_t cg, uint8_t cb,
+                         bool held = false) {
+        const bool active = held || (r.contains(input.mouseX, input.mouseY) && input.down);
         rect(r.x, r.y, r.w, r.h, static_cast<uint8_t>(cr / 3 + (active ? 30 : 0)),
              static_cast<uint8_t>(cg / 3 + (active ? 30 : 0)), static_cast<uint8_t>(cb / 3 + (active ? 34 : 0)), 175);
         rectOutline(r.x, r.y, r.w, r.h, cr, cg, cb, static_cast<uint8_t>(active ? 255 : 170), 2.0f * s);
@@ -499,14 +507,17 @@ void Hud::drawTouchControls(const HudModel& model, const HudInput& input) {
     const Rect& stick = tl.stick;
     rect(stick.x, stick.y, stick.w, stick.h, 18, 22, 32, 120);
     rectOutline(stick.x, stick.y, stick.w, stick.h, 120, 140, 170, 120, 2.0f * s);
-    const float knob = 74.0f * s;
-    rect(stick.cx() - knob * 0.5f, stick.cy() - knob * 0.5f, knob, knob, 90, 110, 145, 150);
+    // кружок стика едет за вводом: видно, куда именно толкает палец
+    const StickKnob knob = stickKnobFor(stick, model.stickDX, model.stickDY, s);
+    rect(knob.x, knob.y, knob.size, knob.size, 90, 110, 145, 150);
+    rectOutline(knob.x, knob.y, knob.size, knob.size, 150, 175, 210, 110, 1.5f * s);
 
-    padButton(tl.jump, "ПРЫГ", 90, 200, 255);
-    padButton(tl.breakBlock, "ЛОМ", 255, 150, 90);
-    padButton(tl.placeBlock, "СТАВ", 120, 220, 150);
+    padButton(tl.jump, "ПРЫГ", 90, 200, 255, model.jumpActive);
+    padButton(tl.breakBlock, "ЛОМ", 255, 150, 90, model.breakActive);
+    padButton(tl.placeBlock, "СТАВ", 120, 220, 150, model.placeActive);
     padButton(tl.explode, "ТНТ", 240, 100, 90);
-    padButton(tl.fly, "ПОЛЁТ", 180, 160, 255);
+    // ПОЛЁТ подсвечивается, когда игрок действительно летит
+    padButton(tl.fly, model.flying ? "ЛЕТИМ" : "ПОЛЁТ", 180, 160, 255, model.flying);
     padButton(tl.attack, "УДАР", 255, 120, 150);
 }
 

@@ -2,6 +2,8 @@
 // раскладку HUD и попадания по кнопкам на настоящих разрешениях устройств.
 #include <algorithm>
 #include <cstdio>
+#include <tuple>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -18,6 +20,7 @@ using razlom::client::HudResult;
 using razlom::client::HudSlot;
 using razlom::client::Rect;
 using razlom::client::Screen;
+using razlom::client::TouchLayout;
 
 namespace {
 
@@ -49,6 +52,10 @@ HudModel menuModel() {
         model.hotbar.push_back(slot);
     }
     return model;
+}
+
+bool overlaps(const Rect& a, const Rect& b) {
+    return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
 struct Drawn {
@@ -233,6 +240,119 @@ TEST(hud_playing_shows_frame_stats) {
     float maxX = 0.0f;
     for (const auto& v : hud.vertices()) maxX = std::max(maxX, v.x);
     CHECK(maxX <= static_cast<float>(input.width) + 1.0f);
+}
+
+// Кнопка паузы должна быть доступна с телефона: она в раскладке (одна и та же
+// для отрисовки и для попаданий) и ни с чем не пересекается.
+TEST(hud_pause_button_is_clickable_on_screen) {
+    Hud hud;
+    hud.init(&atlas());
+    for (const auto& size : {std::pair<int, int>{1280, 760}, std::pair<int, int>{2340, 1080}}) {
+        const TouchLayout& tl = hud.layout(size.first, size.second);
+        const Rect& p = tl.pause;
+        CHECK(p.w > 20.0f);
+        CHECK(p.h > 20.0f);
+        CHECK(p.x >= 0.0f);
+        CHECK(p.y >= 0.0f);
+        CHECK(p.x + p.w <= static_cast<float>(size.first));
+        CHECK(p.y + p.h <= static_cast<float>(size.second));
+        CHECK(!overlaps(p, tl.stick));
+        const Rect buttons[] = {tl.jump, tl.breakBlock, tl.placeBlock, tl.explode, tl.fly, tl.attack};
+        for (const Rect& b : buttons) CHECK(!overlaps(p, b));
+        for (const Rect& h : tl.hotbar) CHECK(!overlaps(p, h));
+    }
+}
+
+// Кружок стика не вылезает за пределы области при любом отклонении.
+TEST(hud_stick_knob_stays_inside) {
+    Hud hud;
+    hud.init(&atlas());
+    for (const auto& size : {std::pair<int, int>{1280, 760}, std::pair<int, int>{2340, 1080}}) {
+        HudInput input;
+        input.width = size.first;
+        input.height = size.second;
+        input.touchMode = true;
+        HudResult ignored;
+        hud.draw(menuModel(), input, ignored);
+        const TouchLayout& tl = hud.layout(size.first, size.second);
+        const float s = hud.scale();
+        for (float dy : {-1.0f, -0.5f, 0.0f, 0.5f, 1.0f}) {
+            for (float dx : {-1.0f, -0.5f, 0.0f, 0.5f, 1.0f}) {
+                const razlom::client::StickKnob k = razlom::client::stickKnobFor(tl.stick, dx, dy, s);
+                CHECK(k.x >= tl.stick.x - 0.5f);
+                CHECK(k.y >= tl.stick.y - 0.5f);
+                CHECK(k.x + k.size <= tl.stick.x + tl.stick.w + 0.5f);
+                CHECK(k.y + k.size <= tl.stick.y + tl.stick.h + 0.5f);
+            }
+        }
+    }
+}
+
+// Нажатие по кнопке паузы действительно возвращает действие Pause — раньше
+// на телефоне касание игрового экрана не доходило до HUD.
+TEST(hud_pause_button_triggers_action) {
+    Hud hud;
+    hud.init(&atlas());
+    HudModel model = menuModel();
+    model.screen = Screen::Playing;
+    model.showTouch = true;
+    HudInput input;
+    input.width = 2340;
+    input.height = 1080;
+    input.touchMode = true;
+    const TouchLayout& tl = hud.layout(input.width, input.height);
+    input.mouseX = tl.pause.cx();
+    input.mouseY = tl.pause.cy();
+    input.pressed = true;
+    input.down = true;
+    HudResult result;
+    hud.draw(model, input, result);
+    CHECK(result.action == HudAction::Pause);
+
+    // касание мимо кнопки паузу не вызывает
+    input.mouseX = tl.pause.x - 40.0f;
+    input.mouseY = tl.pause.cy();
+    HudResult other;
+    hud.draw(model, input, other);
+    CHECK(other.action != HudAction::Pause);
+}
+
+// Состояние полёта видно на кнопке: «ЛЕТИМ» вместо «ПОЛЁТ».
+TEST(hud_fly_state_is_visible) {
+    Hud hud;
+    hud.init(&atlas());
+    HudModel model = menuModel();
+    model.screen = Screen::Playing;
+    model.showTouch = true;
+    HudInput input;
+    input.width = 2340;
+    input.height = 1080;
+    input.touchMode = true;
+    HudResult result;
+
+    const TouchLayout& tl = hud.layout(input.width, input.height);
+    auto flyButtonTint = [&]() {
+        int r = 0, g = 0, b = 0, n = 0;
+        for (const auto& vert : hud.vertices()) {
+            if (!tl.fly.contains(vert.x, vert.y)) continue;
+            r += vert.r;
+            g += vert.g;
+            b += vert.b;
+            ++n;
+        }
+        return std::make_tuple(n, n ? r / n : 0, n ? g / n : 0, n ? b / n : 0);
+    };
+
+    model.flying = false;
+    hud.draw(model, input, result);
+    const auto idle = flyButtonTint();
+    model.flying = true;
+    hud.draw(model, input, result);
+    const auto flying = flyButtonTint();
+    CHECK(std::get<0>(idle) > 0);
+    CHECK(std::get<0>(flying) > 0);
+    // активная кнопка светлее: подсветка состояния полёта видна игроку
+    CHECK(std::get<1>(flying) > std::get<1>(idle));
 }
 
 int main() { return test::runAll(); }
