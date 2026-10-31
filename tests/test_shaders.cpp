@@ -87,6 +87,39 @@ TEST(shader_glsl_attributes_match_desc) {
     CHECK(has(skyVs, "in vec4 color;"));
 }
 
+// Небо: горизонт и солнце — обычные vec4-юниформы во фрагментном шейдере.
+// Имена обязаны в точности совпадать с sg_shader_desc в renderer.cpp.
+TEST(shader_sky_uses_plain_uniforms) {
+    const std::string fs(kSkyFsGlsl);
+    checkNoUniformBlock("sky fs", kSkyFsGlsl);
+    CHECK(has(fs, "uniform vec4 horizon;"));
+    CHECK(has(fs, "uniform vec4 sun;"));
+    CHECK_EQ(countOf(fs, "uniform vec4 horizon;"), 1);
+    CHECK_EQ(countOf(fs, "uniform vec4 sun;"), 1);
+    // Шейдер обязан рисовать градиент и солнце, а не одну заливку цветом вершины
+    CHECK(has(fs, "mix("));
+    CHECK(has(fs, "smoothstep("));
+    CHECK(has(fs, "v_pos"));
+    // Вершинный шейдер передаёт позицию как varying, иначе градиента не будет
+    CHECK(has(std::string(kSkyVsGlsl), "out vec2 v_pos;"));
+    CHECK(has(std::string(kSkyVsGlsl), "v_pos = position;"));
+}
+
+// Запасное небо: без юниформов и без ветвлений, которые может не осилить
+// драйвер. Главное — оно обязано быть и не оставлять экран чёрным.
+TEST(shader_sky_flat_fallback) {
+    const std::string flat(kSkyFlatFsGlsl);
+    checkNoUniformBlock("sky flat fs", kSkyFlatFsGlsl);
+    CHECK(!has(flat, "uniform"));
+    CHECK(has(flat, "v_color"));
+    CHECK(has(flat, "frag_color"));
+    CHECK(has(flat, "vec4(0.45, 0.71, 0.95, 1.0)"));  // страховка от чёрного неба
+    CHECK(has(std::string(kSkyFlatFsHlsl), "SV_Target"));
+    CHECK(has(std::string(kSkyFlatFsHlsl), "float3(0.45, 0.71, 0.95)"));
+    // Запасное небо читает v_pos, который объявлен в общем вершинном шейдере неба.
+    CHECK(has(std::string(kSkyVsGlsl), "out vec2 v_pos;"));
+}
+
 // У HLSL (D3D11) всё наоборот: там настоящий cbuffer, и он должен остаться.
 // Имена из sg_shader_desc обязаны встречаться в GLSL как объявления uniform'ов:
 // иначе sokol не найдёт location и молча оставит значение нулевым.
@@ -112,6 +145,12 @@ TEST(shader_hlsl_world_keeps_cbuffer) {
     CHECK(has(worldVs, "float4x4 mvp;"));
     CHECK(has(std::string(kWaterVsHlsl), "cbuffer vs_params : register(b0)"));
     CHECK(has(std::string(kWorldFsHlsl), "SV_Target"));
+    // Небо в HLSL: те же два float4 в cbuffer фрагментного шейдера
+    const std::string skyFs(kSkyFsHlsl);
+    CHECK(has(skyFs, "cbuffer fs_params : register(b0)"));
+    CHECK(has(skyFs, "float4 horizon;"));
+    CHECK(has(skyFs, "float4 sun;"));
+    CHECK(has(std::string(kSkyVsHlsl), "float2 uv : TEXCOORD0;"));
     CHECK(has(std::string(kUiFsHlsl), "SV_Target"));
 }
 
@@ -122,6 +161,7 @@ TEST(shader_all_have_entry_point) {
         {"water vs glsl", kWaterVsGlsl}, {"water fs glsl", kWaterFsGlsl},
         {"ui vs glsl", kUiVsGlsl},       {"ui fs glsl", kUiFsGlsl},
         {"sky vs glsl", kSkyVsGlsl},     {"sky fs glsl", kSkyFsGlsl},
+        {"sky flat glsl", kSkyFlatFsGlsl}, {"sky flat hlsl", kSkyFlatFsHlsl},
         {"world vs hlsl", kWorldVsHlsl}, {"world fs hlsl", kWorldFsHlsl},
         {"water vs hlsl", kWaterVsHlsl}, {"water fs hlsl", kWaterFsHlsl},
         {"ui vs hlsl", kUiVsHlsl},       {"ui fs hlsl", kUiFsHlsl},

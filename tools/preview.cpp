@@ -18,7 +18,9 @@
 
 #include "razlom/client/font.hpp"
 #include "razlom/client/hud.hpp"
+#include "razlom/client/sky.hpp"
 #include "razlom/core/blocks.hpp"
+#include "razlom/core/clouds.hpp"
 #include "razlom/core/math.hpp"
 #include "razlom/core/mesher.hpp"
 #include "razlom/core/physics.hpp"
@@ -156,24 +158,35 @@ void rasterTriangle(Image& img, std::vector<float>& depth, const ClipVertex& a, 
     }
 }
 
-void drawSky(Image& img) {
-    // тот же треугольник, что в renderer.cpp: (-1,-1), (3,-1), (-1,3)
-    const float bottom[3] = {66.0f, 120.0f, 176.0f};
-    const float top[3] = {132.0f, 196.0f, 240.0f};
+// Небо как в клиенте: градиент от горизонта к зениту и солнце.
+// Горизонт смещается от наклона камеры, поэтому небо «живое», а не заливка.
+void drawSky(Image& img, const razlom::client::Camera& cam) {
+    const float aspect = static_cast<float>(img.w) / static_cast<float>(img.h);
+    const razlom::client::SkyLook look =
+        razlom::client::computeSkyLook(cam.yaw, cam.pitch, cam.fovDegrees, aspect,
+                                       razlom::client::kDefaultSunDirection);
     for (int y = 0; y < img.h; ++y) {
         const float ndcY = 1.0f - (static_cast<float>(y) + 0.5f) / static_cast<float>(img.h) * 2.0f;
-        const float t = razlom::clampf((ndcY + 1.0f) / 4.0f, 0.0f, 1.0f);
-        const float c[3] = {bottom[0] + (top[0] - bottom[0]) * t, bottom[1] + (top[1] - bottom[1]) * t,
-                            bottom[2] + (top[2] - bottom[2]) * t};
-        for (int x = 0; x < img.w; ++x) img.set(x, y, c[0], c[1], c[2]);
+        for (int x = 0; x < img.w; ++x) {
+            const float ndcX = (static_cast<float>(x) + 0.5f) / static_cast<float>(img.w) * 2.0f - 1.0f;
+            float rgb[3];
+            razlom::client::skyColorAt(ndcX, ndcY, look, rgb);
+            img.set(x, y, rgb[0] * 255.0f, rgb[1] * 255.0f, rgb[2] * 255.0f);
+        }
     }
 }
 
 struct Scene {
     razlom::World world{12345};
     std::vector<razlom::ChunkMesh> meshes;
+    std::vector<razlom::MeshVertex> clouds;  // как в renderer.cpp: слой облаков
     razlom::client::FontAtlas font;
 };
+
+void buildClouds(Scene& scene) {
+    // Общая геометрия облаков: тот же код, что и в клиенте.
+    razlom::buildCloudMesh(scene.clouds);
+}
 
 void buildScene(Scene& scene, uint32_t seed) {
     scene.world = razlom::World(seed);
@@ -181,6 +194,21 @@ void buildScene(Scene& scene, uint32_t seed) {
     scene.meshes.resize(razlom::World::kChunkCount);
     for (int i = 0; i < razlom::World::kChunkCount; ++i) {
         razlom::buildChunkMesh(scene.world, i, scene.meshes[static_cast<size_t>(i)]);
+    }
+}
+
+void drawMesh(Image& img, std::vector<float>& depth, const std::vector<razlom::MeshVertex>& tris,
+              const Viewport& vp) {
+    for (size_t i = 0; i + 2 < tris.size(); i += 3) {
+        const razlom::MeshVertex& v0 = tris[i];
+        const razlom::MeshVertex& v1 = tris[i + 1];
+        const razlom::MeshVertex& v2 = tris[i + 2];
+        ClipVertex a = project(vp, Vec3{v0.x, v0.y, v0.z}, v0.r, v0.g, v0.b, v0.a / 255.0f);
+        ClipVertex b = project(vp, Vec3{v1.x, v1.y, v1.z}, v1.r, v1.g, v1.b, v1.a / 255.0f);
+        ClipVertex c = project(vp, Vec3{v2.x, v2.y, v2.z}, v2.r, v2.g, v2.b, v2.a / 255.0f);
+        if (a.invW <= 0.0f || b.invW <= 0.0f || c.invW <= 0.0f) continue;
+        if (!nearClip(a, b, c)) continue;
+        rasterTriangle(img, depth, a, b, c, false, 1.0f);
     }
 }
 
@@ -316,7 +344,6 @@ void renderScreen(const Scene& scene, razlom::client::Hud& hud, razlom::client::
     std::vector<float> depth(static_cast<size_t>(width) * height, 2.0f);
 
     if (withWorld) {
-        drawSky(img);
         razlom::client::Camera cam;
         if (view == 1) {
             // обзор стартовой сцены со стороны: башня, дом, мост
@@ -324,6 +351,11 @@ void renderScreen(const Scene& scene, razlom::client::Hud& hud, razlom::client::
                                 static_cast<float>(razlom::World::kSizeZ / 2 + 18)};
             cam.yaw = 0.72f;
             cam.pitch = -0.42f;
+        } else if (view == 3) {
+            // взгляд в небо: облака и солнце — кадр никогда не должен быть пустым
+            cam.position = razlom::spawnPosition(scene.world) + Vec3{0.0f, razlom::kEyeHeight, 0.0f};
+            cam.yaw = -1.62f;
+            cam.pitch = 0.58f;
         } else if (view == 2) {
             // вид от спавна: туда же, куда смотрит игрок в игре
             cam.position = razlom::spawnPosition(scene.world) + Vec3{0.0f, razlom::kEyeHeight, 0.0f};
@@ -335,6 +367,7 @@ void renderScreen(const Scene& scene, razlom::client::Hud& hud, razlom::client::
             cam.pitch = -0.18f;
         }
         cam.fovDegrees = 74.0f;
+        drawSky(img, cam);
         const razlom::Mat4 view =
             razlom::Mat4::lookAt(cam.position, cam.position + cam.forward(), Vec3{0.0f, 1.0f, 0.0f});
         const float aspect = static_cast<float>(width) / static_cast<float>(height);
@@ -345,6 +378,7 @@ void renderScreen(const Scene& scene, razlom::client::Hud& hud, razlom::client::
         vp.vp = proj * view;
         vp.eye = cam.position;
         drawWorld(img, depth, scene, vp, false, 1.0f);
+        drawMesh(img, depth, scene.clouds, vp);  // облака: непрозрачная геометрия мира
         // подсветка блока под прицелом
         for (const razlom::ChunkMesh& mesh : scene.meshes) {
             for (size_t i = 0; i + 2 < mesh.water.size(); i += 3) {
@@ -359,8 +393,9 @@ void renderScreen(const Scene& scene, razlom::client::Hud& hud, razlom::client::
             }
         }
     } else {
-        img.clearTo(12.0f, 15.0f, 24.0f);
-        drawSky(img);  // как в клиенте: небо есть всегда
+        razlom::client::Camera cam;
+        cam.pitch = 0.08f;
+        drawSky(img, cam);  // как в клиенте: небо есть всегда
     }
 
     razlom::client::HudInput input;
@@ -393,6 +428,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     buildScene(scene, 20261030u);
+    buildClouds(scene);
     int blocks = 0;
     for (int y = 0; y < razlom::World::kSizeY; ++y)
         for (int z = 0; z < razlom::World::kSizeZ; ++z)
@@ -418,5 +454,6 @@ int main(int argc, char** argv) {
     renderScreen(scene, hud, Screen::Playing, 1600, 900, false, outDir + "/09-hero.ppm", true, 1);
     renderScreen(scene, hud, Screen::Playing, 1600, 900, false, outDir + "/10-spawn-view.ppm", true, 2);
     renderScreen(scene, hud, Screen::Playing, 2340, 1080, true, outDir + "/11-phone-touch.ppm", true, 2);
+    renderScreen(scene, hud, Screen::Playing, 1600, 900, false, outDir + "/12-sky-view.ppm", true, 3);
     return 0;
 }

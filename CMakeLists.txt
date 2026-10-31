@@ -66,6 +66,12 @@ if(RAZLOM_BUILD_TESTS AND NOT ANDROID)
     target_include_directories(razlom_controls_tests PRIVATE ${RAZLOM_INCLUDES})
     add_test(NAME razlom_controls_tests COMMAND razlom_controls_tests)
 
+    # Кадр: небо, облака и сторож мира («голубой экран» не должен появляться)
+    add_executable(razlom_frame_tests tests/test_frame.cpp)
+    target_include_directories(razlom_frame_tests PRIVATE ${RAZLOM_INCLUDES})
+    target_link_libraries(razlom_frame_tests PRIVATE razlom_core)
+    add_test(NAME razlom_frame_tests COMMAND razlom_frame_tests)
+
     # Исходники шейдеров: ловят то, чего не видно без GPU (uniform-блоки в GLSL и т.п.)
     add_executable(razlom_shader_tests tests/test_shaders.cpp)
     target_include_directories(razlom_shader_tests PRIVATE ${RAZLOM_INCLUDES})

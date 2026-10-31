@@ -245,6 +245,23 @@ void App::handleNetwork(float dt) {
     if (!inbox.debris.empty()) debris_ = inbox.debris;
     else if (mode_ != GameMode::Sandbox) debris_.clear();
 
+    // Снимки с сервера фильтруются от NaN/inf: одно такое значение уходит в
+    // матрицу кадра, проекция ломается и мир полностью исчезает с экрана
+    // (ровно тот самый «голубой экран»).
+    players_.erase(std::remove_if(players_.begin(), players_.end(),
+                                  [](const net::PlayerSnapshot& p) {
+                                      return !std::isfinite(p.pos.x) || !std::isfinite(p.pos.y) ||
+                                             !std::isfinite(p.pos.z) || !std::isfinite(p.yaw) ||
+                                             !std::isfinite(p.pitch);
+                                  }),
+                   players_.end());
+    debris_.erase(std::remove_if(debris_.begin(), debris_.end(),
+                                 [](const net::DebrisSnapshot& d) {
+                                     return !std::isfinite(d.pos.x) || !std::isfinite(d.pos.y) ||
+                                            !std::isfinite(d.pos.z);
+                                 }),
+                  debris_.end());
+
     for (const BlockChange& change : inbox.changes) {
         world_.applyRemote(change.x, change.y, change.z, change.block);
     }
@@ -478,6 +495,9 @@ void App::triggerExplosion() {
 }
 
 void App::updatePlaying(float dt) {
+    // Перед движением проверяем камеру: NaN или выход за мир ломают проекцию,
+    // и тогда в кадре не остаётся ни одного чанка.
+    sanitizeCamera();
     updateMovement(dt);
     fixStuckPlayer();
 
@@ -601,7 +621,14 @@ void App::frame() {
     frameData.camera.position = local_.pos + Vec3{0.0f, kEyeHeight, 0.0f};
     frameData.camera.yaw = local_.yaw;
     frameData.camera.pitch = local_.pitch;
-    frameData.camera.fovDegrees = 74.0f;
+    // Угол обзора плавно расширяется на бегу и в полёте: движение читается
+    // по картинке, но кадр не «дёргается» мгновенно.
+    {
+        const float targetFov = 74.0f + (sprintHeld_ ? 6.0f : 0.0f) + (local_.flying ? 1.5f : 0.0f);
+        fov_ += (targetFov - fov_) * std::min(1.0f, dt * 9.0f);
+        if (!std::isfinite(fov_)) fov_ = 74.0f;
+        frameData.camera.fovDegrees = fov_;
+    }
     frameData.world = (screen_ == Screen::Playing || screen_ == Screen::Paused) && worldReady_ ? &world_ : nullptr;
     frameData.debris = &debris_;
     frameData.players = &players_;
@@ -614,23 +641,76 @@ void App::frame() {
     frameData.showSky = true;
     renderer_.render(frameData);
 
-    // Диагностика «мир пропал»: если в кадре нет ни одного чанка, пишем это в
-    // журнал прямо на экране — по скриншоту сразу видно, что случилось.
-    if (screen_ == Screen::Playing && worldReady_) {
-        if (renderer_.visibleChunks() == 0) {
-            emptyFrameTimer_ += dt;
-            if (emptyFrameTimer_ > 1.5f) {
-                emptyFrameTimer_ = 0.0f;
-                char buf[96];
-                std::snprintf(buf, sizeof(buf), "Мир вне кадра: %.0f,%.0f,%.0f · вызовов %d",
-                              static_cast<double>(local_.pos.x), static_cast<double>(local_.pos.y),
-                              static_cast<double>(local_.pos.z), renderer_.drawCalls());
-                addLog(buf);
-            }
-        } else {
-            emptyFrameTimer_ = 0.0f;
+    watchWorldFrame(dt);
+}
+
+// Сторож кадра. Если в кадре нет ни одного чанка мира, хотя камера смотрит не
+// в зенит, — это не «небо», а сбой: сначала пересобираем геометрию (потерянные
+// GPU-буферы), затем возвращаем камеру в проверенную точку. Голубой экран без
+// мира не остаётся дольше секунды.
+void App::watchWorldFrame(float dt) {
+    const WatchAction action =
+        watch_.tick(dt, screen_ == Screen::Playing, worldReady_, renderer_.visibleChunks(), local_.pitch);
+    switch (action) {
+        case WatchAction::None:
+            return;
+        case WatchAction::Rebuild:
+            renderer_.rebuildWorld(world_, 96);
+            addLog("Мир пропал из кадра — пересобираю геометрию");
+            return;
+        case WatchAction::RebuildAndRespawn:
+            renderer_.rebuildWorld(world_, 96);
+            respawnCamera("Мир не вернулся — вернул камеру к спавну");
+            return;
+        case WatchAction::ResetWorldAndRespawn:
+            renderer_.resetWorld(world_);
+            renderer_.buildChunks(world_, 128);
+            respawnCamera("Пересобрал мир заново");
+            return;
+        case WatchAction::Log: {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "Мир вне кадра: %.0f,%.0f,%.0f · вызовов %d",
+                          static_cast<double>(local_.pos.x), static_cast<double>(local_.pos.y),
+                          static_cast<double>(local_.pos.z), renderer_.drawCalls());
+            addLog(buf);
+            return;
         }
     }
+}
+
+void App::respawnCamera(const char* reason) {
+    // Спавн — центр мира; он гарантированно окружён чанками, поэтому после
+    // возврата камера точно видит мир. Если центр застроен — ищем свободное место.
+    Vec3 spot = spawnPosition(world_);
+    Vec3 free;
+    if (findFreeSpot(world_, spot, free)) spot = free;
+    local_.pos = spot;
+    local_.vel = Vec3{};
+    local_.flying = false;
+    local_.yaw = 0.0f;
+    local_.pitch = -0.15f;
+    if (reason != nullptr) addToast(reason);
+}
+
+// Камера не должна содержать NaN/inf и уходить за пределы мира: иначе
+// проекция ломается и кадр остаётся пустым (тот самый «голубой экран»).
+bool App::sanitizeCamera() {
+    bool fixed = false;
+    if (!std::isfinite(local_.pos.x) || !std::isfinite(local_.pos.y) || !std::isfinite(local_.pos.z) ||
+        !std::isfinite(local_.yaw) || !std::isfinite(local_.pitch)) {
+        respawnCamera("Камера сбилась — вернул на спавн");
+        return true;
+    }
+    const Vec3 clamped = clampToWorld(local_.pos);
+    if ((clamped - local_.pos).lengthSq() > 1e-6f) {
+        local_.pos = clamped;
+        fixed = true;
+    }
+    if (!std::isfinite(local_.vel.x) || !std::isfinite(local_.vel.y) || !std::isfinite(local_.vel.z)) {
+        local_.vel = Vec3{};
+        fixed = true;
+    }
+    return fixed;
 }
 
 // Диагностическая строка кадра: сюда же кладём позицию камеры, чтобы по одному
@@ -1058,10 +1138,26 @@ void App::onEvent(const sapp_event* ev) {
             mouseBreakHeld_ = false;
             mousePlaceHeld_ = false;
             break;
+        case SAPP_EVENTTYPE_RESUMED:
+            // Возврат из фона: на Android/Emscripten контекст могли потерять.
+            // Пересобираем геометрию чанков заранее — иначе первый кадр после
+            // возврата остаётся пустым (тот самый голубой экран).
+            watch_.reset();
+            if (worldReady_) renderer_.rebuildWorld(world_, 96);
+            for (bool& key : keys_) key = false;
+            controls_.reset();
+            downTouches_.clear();
+            mouseBreakHeld_ = false;
+            mousePlaceHeld_ = false;
+            break;
         case SAPP_EVENTTYPE_RESIZED:
-            screenWidth_ = ev->window_width;
-            screenHeight_ = ev->window_height;
-            renderer_.setScreenSize(screenWidth_, screenHeight_);
+            // Нулевой размер бывает при сворачивании окна: не затираем рабочий
+            // размер, иначе следующий кадр останется пустым.
+            if (ev->window_width > 0 && ev->window_height > 0) {
+                screenWidth_ = ev->window_width;
+                screenHeight_ = ev->window_height;
+                renderer_.setScreenSize(screenWidth_, screenHeight_);
+            }
             break;
         default:
             break;
